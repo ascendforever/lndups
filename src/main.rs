@@ -205,7 +205,7 @@ fn format_pair(f1: &PathBuf, f2: &PathBuf, cfg: &Config) -> String {
     let f2s = f2.to_string_lossy();
     if cfg.no_brace_output {
         return format!(
-            "hardlinked {}  {}\n",
+            "{}  {}\n",
             shlex::quote(&f1s),
             shlex::quote(&f2s)
         )
@@ -217,7 +217,7 @@ fn format_pair(f1: &PathBuf, f2: &PathBuf, cfg: &Config) -> String {
     let suffixlong = suffix.len() > 2;
     if prefixlong && suffixlong {
         format!(
-            "hardlinked {}{{{},{}}}{}\n",
+            "{}{{{},{}}}{}\n",
             shlex::quote(prefix),
             shlex::quote(&f1s[ prefix.len()..std::cmp::max(prefix.len(), f1s.len()-suffix.len()) ]),
             shlex::quote(&f2s[ prefix.len()..std::cmp::max(prefix.len(), f2s.len()-suffix.len()) ]),
@@ -225,21 +225,21 @@ fn format_pair(f1: &PathBuf, f2: &PathBuf, cfg: &Config) -> String {
         )
     } else if prefixlong {
         format!(
-            "hardlinked {}{{{},{}}}\n",
+            "{}{{{},{}}}\n",
             shlex::quote(prefix),
             shlex::quote(&f1s[prefix.len()..]),
             shlex::quote(&f2s[prefix.len()..])
         )
     } else if suffixlong {
         format!(
-            "hardlinked {{{},{}}}{}\n",
+            "{{{},{}}}{}\n",
             shlex::quote(&f1s[..f1s.len()-suffix.len()]),
             shlex::quote(&f2s[..f2s.len()-suffix.len()]),
             shlex::quote(suffix),
         )
     } else {
         format!(
-            "hardlinked {}  {}\n",
+            "{}  {}\n",
             shlex::quote(&f1s),
             shlex::quote(&f2s)
         )
