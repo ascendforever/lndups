@@ -18,3 +18,8 @@ Cargo.lock
 
 # user script
 /build
+
+
+# Added by cargo
+
+/target
