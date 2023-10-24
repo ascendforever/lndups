@@ -1,0 +1,2 @@
+# lndups
+Hardlink duplicate files
