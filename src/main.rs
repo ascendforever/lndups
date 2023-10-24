@@ -82,6 +82,7 @@ fn process_args() -> (Vec<Vec<PathBuf>>, Config) {
     let args = CLIArguments::from_args();
 
     let run_targets: Vec<Vec<String>> = split_vec(&args.targets, ";");
+    run_targets.retain(|targets| targets.len() > 0);
 
     if args.prompt {
         if !prompt_confirm(&run_targets) {
@@ -91,9 +92,8 @@ fn process_args() -> (Vec<Vec<PathBuf>>, Config) {
 
     let run_paths: Vec<Vec<PathBuf>> = run_targets.iter().enumerate().map(
         |(i,spaths)| {
-            if spaths.len() < 2 {
-                eprintln!("Not enough targets for run {} (args: {})", i+1, shlex::join(spaths.iter().map(|string| string.as_str())));
-                std::process::exit(1);
+            if spaths.len() == 0 {
+                return
             }
             spaths.iter().map(
                 |spath| Path::new(spath).canonicalize().unwrap_or_else(
@@ -151,9 +151,10 @@ fn run(paths: Vec<PathBuf>, cfg: &Config) -> Result<(), Box<dyn std::error::Erro
     registry.retain(|_, files| files.len() >= 2);
 
     let stdout = std::io::stdout();
-    let mut stdout_handle = stdout.lock();
+    let mut stdout_buffer = std::io::BufWriter::new(stdout.lock());
+
     if cfg.verbosity > 0 {
-        stdout_handle.write_all(format!("considering {} total files for duplicates\n", registry.iter().map(|(_,files)| files.len()).sum::<usize>()).as_bytes()).unwrap();
+        writeln!(stdout_buffer, "considering {} total files for duplicates", registry.iter().map(|(_,files)| files.len()).sum::<usize>()).unwrap();
     }
 
     for (fsize, mut files) in registry {
@@ -161,7 +162,7 @@ fn run(paths: Vec<PathBuf>, cfg: &Config) -> Result<(), Box<dyn std::error::Erro
             files.sort_by_key(|path| path.file_name().unwrap_or_default().to_string_lossy().to_string());
         }
         if cfg.verbosity > 1 {
-            stdout_handle.write_all(format!("considering {} files of size {} for duplicates\n", files.len(), fsize).as_bytes()).unwrap();
+            writeln!(stdout_buffer, "considering {} files of size {} for duplicates\n", files.len(), fsize).unwrap();
         }
         for i in (0..files.len()).rev() {
             let f1 = &files[i];
@@ -175,8 +176,7 @@ fn run(paths: Vec<PathBuf>, cfg: &Config) -> Result<(), Box<dyn std::error::Erro
                         }
                     }
                     if cfg.verbosity >= 0 {
-                        stdout_handle.write_all(b"hardlinked ").unwrap();
-                        stdout_handle.write_all(format_pair(f1, f2, cfg).as_bytes()).unwrap();
+                        writeln!(stdout_buffer, "hardlinked {}", format_pair(f1, f2, cfg)).unwrap();
                     }
                 }
             }
@@ -199,13 +199,12 @@ fn hardlink(f1: &PathBuf, f2: &PathBuf) -> Result<(), &'static str> {
     }
 }
 
-/// adds newline at the end
 fn format_pair(f1: &PathBuf, f2: &PathBuf, cfg: &Config) -> String {
     let f1s = f1.to_string_lossy();
     let f2s = f2.to_string_lossy();
     if cfg.no_brace_output {
         return format!(
-            "{}  {}\n",
+            "{}  {}",
             shlex::quote(&f1s),
             shlex::quote(&f2s)
         )
@@ -217,7 +216,7 @@ fn format_pair(f1: &PathBuf, f2: &PathBuf, cfg: &Config) -> String {
     let suffixlong = suffix.len() > 2;
     if prefixlong && suffixlong {
         format!(
-            "{}{{{},{}}}{}\n",
+            "{}{{{},{}}}{}",
             shlex::quote(prefix),
             shlex::quote(&f1s[ prefix.len()..std::cmp::max(prefix.len(), f1s.len()-suffix.len()) ]),
             shlex::quote(&f2s[ prefix.len()..std::cmp::max(prefix.len(), f2s.len()-suffix.len()) ]),
@@ -225,21 +224,21 @@ fn format_pair(f1: &PathBuf, f2: &PathBuf, cfg: &Config) -> String {
         )
     } else if prefixlong {
         format!(
-            "{}{{{},{}}}\n",
+            "{}{{{},{}}}",
             shlex::quote(prefix),
             shlex::quote(&f1s[prefix.len()..]),
             shlex::quote(&f2s[prefix.len()..])
         )
     } else if suffixlong {
         format!(
-            "{{{},{}}}{}\n",
+            "{{{},{}}}{}",
             shlex::quote(&f1s[..f1s.len()-suffix.len()]),
             shlex::quote(&f2s[..f2s.len()-suffix.len()]),
             shlex::quote(suffix),
         )
     } else {
         format!(
-            "{}  {}\n",
+            "{}  {}",
             shlex::quote(&f1s),
             shlex::quote(&f2s)
         )
