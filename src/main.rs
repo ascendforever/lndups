@@ -92,9 +92,6 @@ fn process_args() -> (Vec<Vec<PathBuf>>, Config) {
 
     let run_paths: Vec<Vec<PathBuf>> = run_targets.iter().enumerate().map(
         |(i,spaths)| {
-            if spaths.len() == 0 {
-                return
-            }
             spaths.iter().map(
                 |spath| Path::new(spath).canonicalize().unwrap_or_else(
                     |_| {
