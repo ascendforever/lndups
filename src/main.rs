@@ -81,8 +81,11 @@ fn prompt_confirm(run_targets: &Vec<Vec<String>>) -> bool {
 fn process_args() -> (Vec<Vec<PathBuf>>, Config) {
     let args = CLIArguments::from_args();
 
-    let run_targets: Vec<Vec<String>> = split_vec(&args.targets, ";");
-    run_targets.retain(|targets| targets.len() > 0);
+    let run_targets: Vec<Vec<String>> = {
+        let mut rt = split_vec(&args.targets, ";");
+        rt.retain(|targets| !targets.is_empty() );
+        rt
+    };
 
     if args.prompt {
         if !prompt_confirm(&run_targets) {
@@ -91,16 +94,14 @@ fn process_args() -> (Vec<Vec<PathBuf>>, Config) {
     }
 
     let run_paths: Vec<Vec<PathBuf>> = run_targets.iter().enumerate().map(
-        |(i,spaths)| {
-            spaths.iter().map(
-                |spath| Path::new(spath).canonicalize().unwrap_or_else(
-                    |_| {
-                        eprintln!("Failed to retrieve absolute path for {}", shlex::quote(spath));
-                        std::process::exit(1);
-                    }
-                )
-            ).collect()
-        }
+        |(_,spaths)| spaths.iter().map(
+            |spath| Path::new(spath).canonicalize().unwrap_or_else(
+                |_| {
+                    eprintln!("Failed to retrieve absolute path for {}", shlex::quote(spath));
+                    std::process::exit(1);
+                }
+            )
+        ).collect()
     ).collect();
 
 
@@ -116,24 +117,27 @@ fn process_args() -> (Vec<Vec<PathBuf>>, Config) {
     })
 }
 
-/// minimum length of slice = 2
-fn assert_all_same_device(paths: &[PathBuf]) {
-    let first_device_id = if let Ok(metadata) = std::fs::metadata(&paths[0]) {
+fn get_st_dev(file: &PathBuf) -> u64 {
+    if let Ok(metadata) = std::fs::metadata(file) {
         metadata.st_dev()
     } else {
-        eprintln!("Failed to retrive device id for {}", shlex::quote(&paths[0].to_string_lossy()));
+        eprintln!("Failed to retrive device id for {}", shlex::quote(&file.to_string_lossy()));
         std::process::exit(1);
-    };
-    for path in &paths[1..] {
-        if let Ok(metadata) = std::fs::metadata(path) {
-            if metadata.st_dev() != first_device_id {
-                eprintln!("Device ids must all be the same; got different for: {}", shlex::quote(&path.to_string_lossy()));
-                std::process::exit(1);
-            }
-        } else {
-            eprintln!("Failed to retrive device id for {}", shlex::quote(&path.to_string_lossy()));
-            std::process::exit(1);
+    }
+}
+
+/// minimum length of slice = 2
+fn assert_all_same_device(paths: &[PathBuf]) {
+    if paths.len() <= 1 {
+        return
+    }
+    let first_device_id = get_st_dev(&paths[0]);
+    let wrong: Vec<&PathBuf> = paths[1..].iter().filter(|path| get_st_dev(path) == first_device_id).collect();
+    if !wrong.is_empty() {
+        for path in wrong {
+            eprintln!("Device ids must all be the same; got different for: {}", shlex::quote(&path.to_string_lossy()));
         }
+        std::process::exit(1);
     }
 }
 
