@@ -117,6 +117,7 @@ fn process_args() -> (Vec<Vec<PathBuf>>, Config) {
     })
 }
 
+/// exit on error
 fn get_st_dev(file: &PathBuf) -> u64 {
     if let Ok(metadata) = std::fs::metadata(file) {
         metadata.st_dev()
@@ -148,8 +149,7 @@ fn run(paths: Vec<PathBuf>, cfg: &Config) -> Result<(), Box<dyn std::error::Erro
     for path in paths {
         register(path.to_path_buf(), &mut registry, cfg);
     }
-
-    registry.retain(|_, files| files.len() >= 2);
+    registry.retain(|_,files| files.len() >= 2);
 
     let stdout = std::io::stdout();
     let mut stdout_buffer = std::io::BufWriter::new(stdout.lock());
