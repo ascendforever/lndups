@@ -45,31 +45,49 @@ struct CLIArguments {
                 help="Perform no operations on the filesystem")]
     dry_run: bool,
 
+    #[structopt(short="i",
+                help="Prompt once before operating")]
+    prompt: bool,
+
     #[structopt(short, long, value_name="VALUE",
                 help="Minimum file size to be considered for hardlinking\nNever goes below 1 (the default)")]
-    min_size: u64,
+    min_size: Option<u64>,
 
     #[structopt(value_name="TARGET",
                 help="Target files and directories (recursive)\nEach ';' denotes a new set of targets\n  Each set of targets are separate from all other sets\n  All targets must be on the same device\nAll symlinks are ignored")]
     targets: Vec<String>,
 }
-impl Default for CLIArguments {
-    fn default() -> Self {
-        Self {
-            verbose: 0,
-            quiet: 0,
-            no_brace_output: false,
-            dry_run: false,
-            min_size: 1,
-            targets: Vec::new()
-        }
+
+/// return whether or not user gave confirmation
+fn prompt_confirm(run_targets: &Vec<Vec<String>>) -> bool {
+    println!("Are you sure you want to link all duplicates in each of these sets of targets?");
+    for spaths in run_targets {
+        println!("  {}", shlex::join(spaths.iter().map(|string| string.as_str())));
     }
+    print!("> ");
+    std::io::stdout().flush().unwrap_or_else(|_| ());
+
+    let mut response = String::new();
+    std::io::stdin().read_line(&mut response).unwrap_or_else(
+        |_| {
+            eprintln!("Problem reading input");
+            std::process::exit(1);
+        }
+    );
+
+    response.to_lowercase().starts_with("y")
 }
 
 fn process_args() -> (Vec<Vec<PathBuf>>, Config) {
     let args = CLIArguments::from_args();
 
     let run_targets: Vec<Vec<String>> = split_vec(&args.targets, ";");
+
+    if args.prompt {
+        if !prompt_confirm(&run_targets) {
+            std::process::exit(0);
+        }
+    }
 
     let run_paths: Vec<Vec<PathBuf>> = run_targets.iter().enumerate().map(
         |(i,spaths)| {
@@ -94,7 +112,7 @@ fn process_args() -> (Vec<Vec<PathBuf>>, Config) {
     }
 
     (run_paths, Config {
-        min_size: std::cmp::max(1, args.min_size),
+        min_size: args.min_size.unwrap_or(1),
         no_brace_output: args.no_brace_output,
         dry_run: args.dry_run,
         verbosity: args.verbose - args.quiet
