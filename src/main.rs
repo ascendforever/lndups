@@ -253,21 +253,18 @@ fn register(path: PathBuf, registry: &mut HashMap<u64, Vec<PathBuf>>, cfg: &Conf
         if metadata.file_type().is_symlink() {
             return
         }
-        if metadata.st_size() < cfg.min_size {
-            return
-        }
-    } else { return }
-    if path.is_file() {
-        if let Some(size) = std::fs::metadata(&path).ok().map(|meta| meta.len()) {
-            if size != 0 {
+
+        if path.is_file() {
+            let size = metadata.st_size();
+            if size >= cfg.min_size {
                 registry.entry(size).or_insert(Vec::new()).push(path);
             }
-        }
-    } else if path.is_dir() {
-        if let Ok(entries) = std::fs::read_dir(path) {
-            for entry in entries {
-                if let Ok(entry) = entry {
-                    register(entry.path(), registry, cfg);
+        } else if path.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(path) {
+                for entry in entries {
+                    if let Ok(entry) = entry {
+                        register(entry.path(), registry, cfg);
+                    }
                 }
             }
         }
