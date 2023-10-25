@@ -155,7 +155,7 @@ fn process_args() -> (Vec<Vec<PathBuf>>, Config) {
 
 
     for paths in &run_paths {
-        if let Err(s) = assert_all_same_device(paths) {
+        if let Err(s) = check_all_same_device(paths) {
             eprintln!("{}", s);
             std::process::exit(1);
         }
@@ -179,7 +179,7 @@ fn get_st_dev(file: &PathBuf) -> Result<u64, String> {
     }
 }
 
-fn assert_all_same_device(paths: &[PathBuf]) -> Result<(), String> {
+fn check_all_same_device(paths: &[PathBuf]) -> Result<(), String> {
     if paths.len() <= 1 {
         return Ok(())
     }
@@ -304,7 +304,7 @@ fn format_pair(f1: &PathBuf, f2: &PathBuf, cfg: &Config) -> String {
         )
     } else {
         format!(
-            "{}  {}",
+            "{} <-> {}",
             shlex::quote(&f1s),
             shlex::quote(&f2s)
         )
