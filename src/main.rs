@@ -193,7 +193,7 @@ fn assert_all_same_device(paths: &[PathBuf]) -> Result<(), String> {
     if wrong.is_empty() {
         Ok(())
     } else {
-        let mut s = String::with_capacity(wrong.len()*120); // 67 max estimated len of path, 52 for prefix msg, 1 for newline
+        let mut s = String::with_capacity(wrong.len()*128); // 75 max estimated len of path, 53 for prefix msg + nl
         for path in wrong {
             s.push_str("Device ids must all be the same; got different for: {}");
             s.push_str(&shlex::quote(&path.to_string_lossy()));
