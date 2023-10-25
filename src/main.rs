@@ -281,10 +281,8 @@ fn are_hardlinked(f1: &PathBuf, f2: &PathBuf) -> bool {
 
 /// check equality of contents of two paths to files
 fn cmp(f1: &PathBuf, f2: &PathBuf) -> bool {
-    if let Ok(mut f1) = std::fs::File::open(f1) {
-        if let Ok(mut f2) = std::fs::File::open(f2) {
-            cmp_files(&mut f1, &mut f2)
-        } else { false }
+    if let (Ok(mut f1), Ok(mut f2)) = (std::fs::File::open(f1), std::fs::File::open(f2)) {
+        cmp_files(&mut f1, &mut f2)
     } else { false }
 }
 
