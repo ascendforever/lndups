@@ -1,6 +1,6 @@
 extern crate shlex;
 extern crate structopt;
-use std::io::{Read,Write};
+use std::io::{Read, Write, BufReader, BufRead};
 use std::path::{Path,PathBuf};
 use std::collections::HashMap;
 use std::os::linux::fs::MetadataExt as MetadataExtLinux;
@@ -46,15 +46,23 @@ struct CLIArguments {
     dry_run: bool,
 
     #[structopt(short="i",
-                help="Prompt once before operating")]
+                help="Prompt once before operating\nNever occurs if no targets are provided")]
     prompt: bool,
 
     #[structopt(short, long, value_name="VALUE",
                 help="Minimum file size to be considered for hardlinking\nNever goes below 1 (the default)")]
     min_size: Option<u64>,
 
+    #[structopt(short, long, value_name="SEPARATOR",
+                help="Separator between sets of targets (default: ';')")]
+    sep: Option<String>,
+
+    #[structopt(short, long, value_name="FILE",
+                help="File to source arguments from (can be '-' for stdin)")]
+    argument_file: Option<String>,
+
     #[structopt(value_name="TARGET",
-                help="Target files and directories (recursive)\nEach ';' denotes a new set of targets\n  Each set of targets are separate from all other sets\n  All targets must be on the same device\nAll symlinks are ignored")]
+                help="Target files and directories (recursive)\nEach SEPARATOR denotes a new set of targets\n  Each set of targets are separate from all other sets\n  All targets must be on the same device\nAll symlinks are ignored\n'-' is not treated as special")]
     targets: Vec<String>,
 }
 
@@ -78,14 +86,48 @@ fn prompt_confirm(run_targets: &Vec<Vec<String>>) -> bool {
     response.to_lowercase().starts_with("y")
 }
 
-fn process_args() -> (Vec<Vec<PathBuf>>, Config) {
-    let args = CLIArguments::from_args();
+fn read_argument_file(arg_file: &Path, dest: &mut Vec<String>) -> Result<(), String> {
+    if !arg_file.is_file() {
+        return Err(format!("File does not exist or is not a normal file ({})", shlex::quote(&arg_file.to_string_lossy())));
+    }
+    if let Ok(f) = std::fs::File::open(arg_file) {
+        let reader = BufReader::new(f);
+        for line in reader.lines() {
+            match line {
+                Ok(line) => dest.push(line),
+                Err(err) => return Err(format!("Error reading line: {}", err))
+            }
+        }
+        Ok(())
+    } else {
+        Err(format!("Could not open {}", shlex::quote(&arg_file.to_string_lossy())))
+    }
+}
 
-    let run_targets: Vec<Vec<String>> = {
-        let mut rt = split_vec(&args.targets, ";");
-        rt.retain(|targets| !targets.is_empty() );
-        rt
-    };
+fn process_args() -> (Vec<Vec<PathBuf>>, Config) {
+    let mut args = CLIArguments::from_args();
+    let verbosity = args.verbose - args.quiet;
+
+    if let Some(arg_file) = args.argument_file {
+        if !args.targets.is_empty() {
+            eprintln!("No targets should be provided as cli arguments if arguments are being read from file");
+            std::process::exit(1);
+        }
+        let path = Path::new(&arg_file);
+        if let Err(s) = read_argument_file(path, &mut args.targets) {
+            eprintln!("Error reading argument file: {}", s);
+            std::process::exit(1);
+        }
+    }
+
+    let run_targets: Vec<Vec<String>> = split_vec(&args.targets, &args.sep.unwrap_or(";".to_string()));
+
+    if run_targets.is_empty() {
+        if verbosity > 0 {
+            println!("No targets provided");
+            std::process::exit(0);
+        }
+    }
 
     if args.prompt {
         if !prompt_confirm(&run_targets) {
@@ -106,39 +148,49 @@ fn process_args() -> (Vec<Vec<PathBuf>>, Config) {
 
 
     for paths in &run_paths {
-        assert_all_same_device(paths);
+        if let Err(s) = assert_all_same_device(paths) {
+            eprintln!("{}", s);
+            std::process::exit(1);
+        }
     }
 
     (run_paths, Config {
         min_size: args.min_size.unwrap_or(1),
         no_brace_output: args.no_brace_output,
         dry_run: args.dry_run,
-        verbosity: args.verbose - args.quiet
+        verbosity
     })
 }
 
 /// exit on error
-fn get_st_dev(file: &PathBuf) -> u64 {
+fn get_st_dev(file: &PathBuf) -> Result<u64, String> {
     if let Ok(metadata) = std::fs::metadata(file) {
-        metadata.st_dev()
+        Ok(metadata.st_dev())
     } else {
-        eprintln!("Failed to retrive device id for {}", shlex::quote(&file.to_string_lossy()));
-        std::process::exit(1);
+        Err(format!("Failed to retrive device id for {}", shlex::quote(&file.to_string_lossy())))
     }
 }
 
 /// minimum length of slice = 2
-fn assert_all_same_device(paths: &[PathBuf]) {
+fn assert_all_same_device(paths: &[PathBuf]) -> Result<(), String> {
     if paths.len() <= 1 {
-        return
+        return Ok(())
     }
-    let first_device_id = get_st_dev(&paths[0]);
-    let wrong: Vec<&PathBuf> = paths[1..].iter().filter(|path| get_st_dev(path) == first_device_id).collect();
-    if !wrong.is_empty() {
-        for path in wrong {
-            eprintln!("Device ids must all be the same; got different for: {}", shlex::quote(&path.to_string_lossy()));
+    let first_device_id = get_st_dev(&paths[0])?;
+    let mut wrong: Vec<&PathBuf> = Vec::new();
+    for path in &paths[1..] {
+        if get_st_dev(path)? != first_device_id {
+            wrong.push(path);
         }
-        std::process::exit(1);
+    }
+    if wrong.is_empty() {
+        Ok(())
+    } else {
+        let mut s = String::new();
+        for path in wrong {
+            s.push_str(&format!("Device ids must all be the same; got different for: {}", shlex::quote(&path.to_string_lossy())));
+        }
+        Err(s)
     }
 }
 
@@ -329,7 +381,7 @@ fn common_suffix<'a>(s1: &'a str, s2: &'a str) -> &'a str {
     &s1[s1.len() - len..]
 }
 
-fn split_vec(input: &[String], delimiter: &str) -> Vec<Vec<String>> {
+fn split_vec(input: &[String], delimiter: &String) -> Vec<Vec<String>> {
     let mut result: Vec<Vec<String>> = Vec::new();
     let mut current_vec: Vec<String> = Vec::new();
     for item in input.iter() {
