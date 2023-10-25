@@ -55,7 +55,7 @@ struct CLIArguments {
 
     #[structopt(short, long, value_name="SEPARATOR",
                 help="Separator between sets of targets (default: ';')")]
-    sep: Option<String>,
+    separator: Option<String>,
 
     #[structopt(short, long, value_name="FILE",
                 help="File to source arguments from (can be '-' for stdin)")]
@@ -120,13 +120,13 @@ fn process_args() -> (Vec<Vec<PathBuf>>, Config) {
         }
     }
 
-    let run_targets: Vec<Vec<String>> = split_vec(&args.targets, &args.sep.unwrap_or(";".to_string()));
+    let run_targets: Vec<Vec<String>> = split_vec(&args.targets, &args.separator.unwrap_or(";".to_string()));
 
     if run_targets.is_empty() {
         if verbosity > 0 {
             println!("No targets provided");
-            std::process::exit(0);
         }
+        std::process::exit(0);
     }
 
     if args.prompt {
