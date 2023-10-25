@@ -7,6 +7,7 @@ use std::os::linux::fs::MetadataExt as MetadataExtLinux;
 use crate::structopt::StructOpt;
 
 
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (run_paths, cfg) = process_args();
     for paths in run_paths {
@@ -16,12 +17,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+
 struct Config {
     dry_run: bool,
     min_size: u64,
     verbosity: i8,
     no_brace_output: bool
 }
+
 
 #[derive(StructOpt)]
 #[structopt(
@@ -66,6 +69,7 @@ struct CLIArguments {
     targets: Vec<String>,
 }
 
+
 /// return whether or not user gave confirmation
 fn prompt_confirm(run_targets: &Vec<Vec<String>>) -> bool {
     println!("Are you sure you want to link all duplicates in each of these sets of targets?");
@@ -86,6 +90,7 @@ fn prompt_confirm(run_targets: &Vec<Vec<String>>) -> bool {
     response.to_lowercase().starts_with("y")
 }
 
+
 fn read_argument_file(arg_file: &Path, dest: &mut Vec<String>) -> Result<(), String> {
     if !arg_file.is_file() {
         return Err(format!("File does not exist or is not a normal file ({})", shlex::quote(&arg_file.to_string_lossy())));
@@ -104,6 +109,8 @@ fn read_argument_file(arg_file: &Path, dest: &mut Vec<String>) -> Result<(), Str
     }
 }
 
+
+/// exits on error
 fn process_args() -> (Vec<Vec<PathBuf>>, Config) {
     let mut args = CLIArguments::from_args();
     let verbosity = args.verbose - args.quiet;
@@ -162,6 +169,7 @@ fn process_args() -> (Vec<Vec<PathBuf>>, Config) {
     })
 }
 
+
 /// exit on error
 fn get_st_dev(file: &PathBuf) -> Result<u64, String> {
     if let Ok(metadata) = std::fs::metadata(file) {
@@ -171,7 +179,6 @@ fn get_st_dev(file: &PathBuf) -> Result<u64, String> {
     }
 }
 
-/// minimum length of slice = 2
 fn assert_all_same_device(paths: &[PathBuf]) -> Result<(), String> {
     if paths.len() <= 1 {
         return Ok(())
@@ -186,16 +193,18 @@ fn assert_all_same_device(paths: &[PathBuf]) -> Result<(), String> {
     if wrong.is_empty() {
         Ok(())
     } else {
-        let mut s = String::new();
+        let mut s = String::with_capacity(wrong.len()*120); // 67 max estimated len of path, 52 for prefix msg, 1 for newline
         for path in wrong {
             s.push_str("Device ids must all be the same; got different for: {}");
             s.push_str(&shlex::quote(&path.to_string_lossy()));
+            s.push_str("\n");
         }
         Err(s)
     }
 }
 
-/// perform a full run with pre-processed inputs
+
+/// perform a full run
 fn run(paths: Vec<PathBuf>, cfg: &Config) -> Result<(), Box<dyn std::error::Error>> {
     let mut registry: HashMap<u64, Vec<PathBuf>> = HashMap::new();
 
@@ -208,7 +217,7 @@ fn run(paths: Vec<PathBuf>, cfg: &Config) -> Result<(), Box<dyn std::error::Erro
     let mut stdout_buffer = std::io::BufWriter::new(stdout.lock());
 
     if cfg.verbosity > 0 {
-        writeln!(stdout_buffer, "considering {} total files for duplicates", registry.iter().map(|(_,files)| files.len()).sum::<usize>()).unwrap();
+        writeln!(stdout_buffer, "Considering {} total files for duplicates", registry.iter().map(|(_,files)| files.len()).sum::<usize>()).unwrap();
     }
 
     for (fsize, mut files) in registry {
@@ -216,7 +225,7 @@ fn run(paths: Vec<PathBuf>, cfg: &Config) -> Result<(), Box<dyn std::error::Erro
             files.sort_by_key(|path| path.file_name().unwrap_or_default().to_string_lossy().to_string());
         }
         if cfg.verbosity > 1 {
-            writeln!(stdout_buffer, "considering {} files of size {} for duplicates\n", files.len(), fsize).unwrap();
+            writeln!(stdout_buffer, "Considering {} files of size {} for duplicates\n", files.len(), fsize).unwrap();
         }
         for i in (0..files.len()).rev() {
             let f1 = &files[i];
@@ -240,18 +249,20 @@ fn run(paths: Vec<PathBuf>, cfg: &Config) -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
+
 fn hardlink(f1: &PathBuf, f2: &PathBuf) -> Result<(), &'static str> {
     if let Err(_) = std::fs::remove_file(f2) {
-        Err("failed to remove second file for hardlinking")
+        Err("Failed to remove second file for hardlinking")
     } else if let Err(_) = std::fs::hard_link(f1, f2) { // same as ln in terms of args: left args's inode becomes right arg's inode
         match std::fs::copy(f1, f2) {
-            Ok(_) => Err("failed to hardlink (copied instead)"),
-            Err(_) => Err("failed to hardlink or copy")
+            Ok(_) => Err("Failed to hardlink (copied instead)"),
+            Err(_) => Err("Failed to hardlink or copy")
         }
     } else {
         Ok(())
     }
 }
+
 
 fn format_pair(f1: &PathBuf, f2: &PathBuf, cfg: &Config) -> String {
     let f1s = f1.to_string_lossy();
@@ -324,6 +335,7 @@ fn register(path: PathBuf, registry: &mut HashMap<u64, Vec<PathBuf>>, cfg: &Conf
     }
 }
 
+
 fn are_hardlinked(f1: &PathBuf, f2: &PathBuf) -> bool {
     if let (Ok(md1), Ok(md2)) = (std::fs::metadata(f1), std::fs::metadata(f2)) {
         md1.st_ino() == md2.st_ino()
@@ -331,6 +343,7 @@ fn are_hardlinked(f1: &PathBuf, f2: &PathBuf) -> bool {
         false
     }
 }
+
 
 /// check equality of contents of two paths to files
 fn cmp(f1: &PathBuf, f2: &PathBuf) -> bool {
@@ -364,6 +377,7 @@ fn cmp_files(f1: &mut std::fs::File, f2: &mut std::fs::File) -> bool {
     }
 }
 
+
 fn common_prefix<'a>(s1: &'a str, s2: &'a str) -> &'a str {
     let len = s1
         .chars()
@@ -381,6 +395,7 @@ fn common_suffix<'a>(s1: &'a str, s2: &'a str) -> &'a str {
         .count();
     &s1[s1.len() - len..]
 }
+
 
 fn split_vec(input: &[String], delimiter: &String) -> Vec<Vec<String>> {
     let mut result: Vec<Vec<String>> = Vec::new();
