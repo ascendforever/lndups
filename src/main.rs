@@ -188,7 +188,8 @@ fn assert_all_same_device(paths: &[PathBuf]) -> Result<(), String> {
     } else {
         let mut s = String::new();
         for path in wrong {
-            s.push_str(&format!("Device ids must all be the same; got different for: {}", shlex::quote(&path.to_string_lossy())));
+            s.push_str("Device ids must all be the same; got different for: {}");
+            s.push_str(&shlex::quote(&path.to_string_lossy()));
         }
         Err(s)
     }
