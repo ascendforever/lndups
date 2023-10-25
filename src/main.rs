@@ -60,7 +60,7 @@ struct CLIArguments {
                 help="Separator between sets of targets (default: ';')")]
     separator: Option<String>,
 
-    #[structopt(short, long, value_name="FILE",
+    #[structopt(long, value_name="FILE",
                 help="File to source arguments from (can be '-' for stdin)")]
     argument_file: Option<String>,
 
