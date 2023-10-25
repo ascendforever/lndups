@@ -199,6 +199,7 @@ fn assert_all_same_device(paths: &[PathBuf]) -> Result<(), String> {
             s.push_str(&shlex::quote(&path.to_string_lossy()));
             s.push_str("\n");
         }
+        s.pop(); // remove last newline
         Err(s)
     }
 }
