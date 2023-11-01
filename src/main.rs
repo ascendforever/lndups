@@ -226,7 +226,7 @@ fn run(paths: Vec<PathBuf>, cfg: &Config) -> Result<(), Box<dyn std::error::Erro
             files.sort_by_key(|path| path.file_name().unwrap_or_default().to_string_lossy().to_string());
         }
         if cfg.verbosity > 1 {
-            writeln!(stdout_buffer, "Considering {} files of size {} for duplicates\n", files.len(), fsize).unwrap();
+            writeln!(stdout_buffer, "Considering {} files of size {} for duplicates", files.len(), fsize).unwrap();
         }
         for i in (0..files.len()).rev() {
             let f1 = &files[i];
