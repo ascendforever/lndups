@@ -262,13 +262,13 @@ fn run(paths: Vec<PathBuf>, cfg: &Config) {
                 if !are_hardlinked(f1, f2) && cmp(f1, f2).unwrap_or(false) {
                     if !cfg.dry_run {
                         if let Err(msg) = hardlink(f1, f2) {
-                            eprintln!("{}: {}", msg, format_pair(f1, f2, cfg));
+                            eprintln!("{}: {}", msg, format_pair(&f1.to_string_lossy(), &f2.to_string_lossy(), cfg));
                             continue
                         }
                     }
                     if let Some(stdout_buffer) = &mut stdout_buffer {
                         if cfg.verbosity >= 0 {
-                            writeln!(stdout_buffer, "hardlinked {}", format_pair(f1, f2, cfg)).unwrap();
+                            writeln!(stdout_buffer, "hardlinked {}", format_pair(&f1.to_string_lossy(), &f2.to_string_lossy(), cfg)).unwrap();
                         }
                     }
                 }
@@ -292,9 +292,7 @@ fn hardlink(f1: &PathBuf, f2: &PathBuf) -> Result<(), &'static str> {
 }
 
 
-fn format_pair(f1: &PathBuf, f2: &PathBuf, cfg: &Config) -> String {
-    let f1s = f1.to_string_lossy();
-    let f2s = f2.to_string_lossy();
+fn format_pair(f1s: &str, f2s: &str, cfg: &Config) -> String {
     if cfg.no_brace_output {
         return format!(
             "{}  {}",
