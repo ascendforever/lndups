@@ -349,7 +349,7 @@ fn register(path: PathBuf, registry: &mut HashMap<u64, Vec<PathBuf>>, cfg: &Conf
         if path.is_file() {
             let size = metadata.st_size();
             if size >= cfg.min_size {
-                registry.entry(size).or_insert(Vec::new()).push(path);
+                registry.entry(size).or_insert_with(|| Vec::new()).push(path);
             }
         } else if path.is_dir() {
             if let Ok(entries) = std::fs::read_dir(path) {
