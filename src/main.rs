@@ -7,6 +7,7 @@ use std::os::linux::fs::MetadataExt as MetadataExtLinux;
 use crate::structopt::StructOpt;
 
 
+macro_rules! s_default_target_separator { () => { ";" } }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (run_paths, cfg) = process_args();
@@ -29,7 +30,7 @@ struct Config {
 #[derive(StructOpt)]
 #[structopt(
     about="Hardlink duplicate files recursively",
-    usage=concat!(env!("CARGO_PKG_NAME"), " [OPTION]... TARGET... [';' TARGET...]")
+    usage=concat!(env!("CARGO_PKG_NAME"), " [OPTION]... TARGET... ['", s_default_target_separator!(), "' TARGET...]")
 )]
 struct CLIArguments {
     #[structopt(short, long, parse(from_occurrences),
@@ -57,7 +58,7 @@ struct CLIArguments {
     min_size: Option<u64>,
 
     #[structopt(short, long, value_name="SEPARATOR",
-                help="Separator between sets of targets (default: ';')")]
+                help=concat!("Separator between sets of targets (default: ", s_default_target_separator!(), ")"))]
     separator: Option<String>,
 
     #[structopt(long, value_name="FILE",
@@ -91,11 +92,11 @@ fn prompt_confirm(run_targets: &Vec<Vec<String>>) -> bool {
 }
 
 
-fn read_argument_file(arg_file: &Path, dest: &mut Vec<String>) -> Result<(), String> {
-    if !arg_file.is_file() {
-        return Err(format!("File does not exist or is not a normal file ({})", shlex::quote(&arg_file.to_string_lossy())));
+fn read_file_lines(path: &Path, dest: &mut Vec<String>) -> Result<(), String> {
+    if !path.is_file() {
+        return Err(format!("File does not exist or is not a normal file ({})", shlex::quote(&path.to_string_lossy())));
     }
-    if let Ok(f) = std::fs::File::open(arg_file) {
+    if let Ok(f) = std::fs::File::open(path) {
         let reader = BufReader::new(f);
         for line in reader.lines() {
             match line {
@@ -105,12 +106,12 @@ fn read_argument_file(arg_file: &Path, dest: &mut Vec<String>) -> Result<(), Str
         }
         Ok(())
     } else {
-        Err(format!("Could not open {}", shlex::quote(&arg_file.to_string_lossy())))
+        Err(format!("Could not open {}", shlex::quote(&path.to_string_lossy())))
     }
 }
 
 
-/// exits on error
+/// may exit
 fn process_args() -> (Vec<Vec<PathBuf>>, Config) {
     let mut args = CLIArguments::from_args();
     let verbosity = args.verbose - args.quiet;
@@ -121,13 +122,13 @@ fn process_args() -> (Vec<Vec<PathBuf>>, Config) {
             std::process::exit(1);
         }
         let path = Path::new(&arg_file);
-        if let Err(s) = read_argument_file(path, &mut args.targets) {
+        if let Err(s) = read_file_lines(path, &mut args.targets) {
             eprintln!("Error reading argument file: {}", s);
             std::process::exit(1);
         }
     }
 
-    let run_targets: Vec<Vec<String>> = split_vec(&args.targets, &args.separator.unwrap_or(";".to_string()));
+    let run_targets: Vec<Vec<String>> = split_vec(&args.targets, &args.separator.unwrap_or(s_default_target_separator!().to_string()));
 
     if run_targets.is_empty() {
         if verbosity > 0 {
