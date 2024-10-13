@@ -36,6 +36,12 @@ fn main() -> Result<(), i32> {
         }
     }
 
+    for target in &args.targets {
+        if target.contains('\0') {
+            eprintln!("Paths can never contain null byte: {}", target);
+            return Err(1);
+        }
+    }
     let run_targets: Vec<Vec<&String>> = split_vec(&args.targets, &args.separator.unwrap_or(s_default_target_separator!().to_string()));
 
     if run_targets.is_empty() {
@@ -45,18 +51,12 @@ fn main() -> Result<(), i32> {
         return Ok(());
     }
 
-    if args.prompt {
-        if !prompt_confirm(&run_targets) {
-            return Ok(());
-        }
-    }
-
     let mut bad = false;
     let run_paths: Vec<Vec<PathBuf>> = run_targets.iter().enumerate().map(
         |(_,spaths)| spaths.iter().map(
             |spath| Path::new(spath).canonicalize().unwrap_or_else(
                 |_| {
-                    eprintln!("Failed to retrieve absolute path for {}", shlex::quote(spath));
+                    eprintln!("Failed to retrieve absolute path for {}", shlex::try_quote(spath).unwrap());
                     bad = true;
                     Default::default()
                 }
@@ -65,6 +65,12 @@ fn main() -> Result<(), i32> {
     ).collect();
     if bad {
         return Err(1);
+    }
+
+    if args.prompt {
+        if !prompt_confirm(&run_targets) {
+            return Ok(());
+        }
     }
 
 
@@ -139,7 +145,7 @@ struct CLIArguments {
 fn prompt_confirm<'a, T: Borrow<[Y]>, Y: AsRef<str>>(run_targets: &[T]) -> bool {
     println!("Are you sure you want to link all duplicates in each of these sets of targets?");
     for spaths in run_targets {
-        println!("  {}", shlex::join(spaths.borrow().iter().map(|s| s.as_ref())));
+        println!("  {}", shlex::try_join(spaths.borrow().iter().map(|s| s.as_ref())).unwrap());
     }
     print!("> ");
     std::io::stdout().flush().unwrap_or_else(|_| ());
@@ -158,7 +164,7 @@ fn prompt_confirm<'a, T: Borrow<[Y]>, Y: AsRef<str>>(run_targets: &[T]) -> bool 
 
 fn read_file_lines(path: &Path, dest: &mut Vec<String>) -> Result<(), String> {
     if !path.is_file() {
-        return Err(format!("File does not exist or is not a normal file ({})", shlex::quote(&path.to_string_lossy())));
+        return Err(format!("File does not exist or is not a normal file ({})", shlex::try_quote(&path.to_string_lossy()).unwrap()));
     }
     if let Ok(f) = std::fs::File::open(path) {
         let reader = BufReader::new(f);
@@ -170,7 +176,7 @@ fn read_file_lines(path: &Path, dest: &mut Vec<String>) -> Result<(), String> {
         }
         Ok(())
     } else {
-        Err(format!("Could not open {}", shlex::quote(&path.to_string_lossy())))
+        Err(format!("Could not open {}", shlex::try_quote(&path.to_string_lossy()).unwrap()))
     }
 }
 
@@ -180,7 +186,7 @@ fn get_st_dev(file: &PathBuf) -> Result<u64, String> {
     if let Ok(metadata) = std::fs::metadata(file) {
         Ok(metadata.st_dev())
     } else {
-        Err(format!("Failed to retrive device id for {}", shlex::quote(&file.to_string_lossy())))
+        Err(format!("Failed to retrive device id for {}", shlex::try_quote(&file.to_string_lossy()).unwrap()))
     }
 }
 
@@ -201,7 +207,7 @@ fn check_all_same_device(paths: &[PathBuf]) -> Result<(), String> {
         let mut s = String::with_capacity(wrong.len()*128); // 75 max estimated len of path, 53 for prefix msg + nl
         for path in wrong {
             s.push_str("Device ids must all be the same; got different for: {}");
-            s.push_str(&shlex::quote(&path.to_string_lossy()));
+            s.push_str(&shlex::try_quote(&path.to_string_lossy()).unwrap());
             s.push_str("\n");
         }
         s.pop(); // remove last newline
@@ -283,8 +289,8 @@ fn format_pair(f1s: &str, f2s: &str, cfg: &Config) -> String {
     if cfg.no_brace_output {
         return format!(
             "{}  {}",
-            shlex::quote(&f1s),
-            shlex::quote(&f2s)
+            shlex::try_quote(&f1s).unwrap(),
+            shlex::try_quote(&f2s).unwrap()
         )
     }
 
@@ -295,30 +301,30 @@ fn format_pair(f1s: &str, f2s: &str, cfg: &Config) -> String {
     if prefixlong && suffixlong {
         format!(
             "{}{{{},{}}}{}",
-            shlex::quote(prefix),
-            shlex::quote(&f1s[ prefix.len()..std::cmp::max(prefix.len(), f1s.len()-suffix.len()) ]),
-            shlex::quote(&f2s[ prefix.len()..std::cmp::max(prefix.len(), f2s.len()-suffix.len()) ]),
-            shlex::quote(suffix)
+            shlex::try_quote(prefix).unwrap(),
+            shlex::try_quote(&f1s[ prefix.len()..std::cmp::max(prefix.len(), f1s.len()-suffix.len()) ]).unwrap(),
+            shlex::try_quote(&f2s[ prefix.len()..std::cmp::max(prefix.len(), f2s.len()-suffix.len()) ]).unwrap(),
+            shlex::try_quote(suffix).unwrap()
         )
     } else if prefixlong {
         format!(
             "{}{{{},{}}}",
-            shlex::quote(prefix),
-            shlex::quote(&f1s[prefix.len()..]),
-            shlex::quote(&f2s[prefix.len()..])
+            shlex::try_quote(prefix).unwrap(),
+            shlex::try_quote(&f1s[prefix.len()..]).unwrap(),
+            shlex::try_quote(&f2s[prefix.len()..]).unwrap()
         )
     } else if suffixlong {
         format!(
             "{{{},{}}}{}",
-            shlex::quote(&f1s[..f1s.len()-suffix.len()]),
-            shlex::quote(&f2s[..f2s.len()-suffix.len()]),
-            shlex::quote(suffix),
+            shlex::try_quote(&f1s[..f1s.len()-suffix.len()]).unwrap(),
+            shlex::try_quote(&f2s[..f2s.len()-suffix.len()]).unwrap(),
+            shlex::try_quote(suffix).unwrap(),
         )
     } else {
         format!(
             "{} <-> {}",
-            shlex::quote(&f1s),
-            shlex::quote(&f2s)
+            shlex::try_quote(&f1s).unwrap(),
+            shlex::try_quote(&f2s).unwrap()
         )
     }
 }
