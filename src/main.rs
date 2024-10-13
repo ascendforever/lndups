@@ -29,7 +29,7 @@ struct Config {
 
 #[derive(StructOpt)]
 #[structopt(
-    about="Hardlink duplicate files recursively",
+    about="Hardlink duplicate files recursively\nSymlinks are treated as normal files",
     usage=concat!(env!("CARGO_PKG_NAME"), " [OPTION]... TARGET... ['", s_default_target_separator!(), "' TARGET...]")
 )]
 struct CLIArguments {
@@ -50,7 +50,7 @@ struct CLIArguments {
     dry_run: bool,
 
     #[structopt(short="i",
-                help="Prompt once before operating\nNever occurs if no targets are provided")]
+                help="Prompt once before operating\nDoesn't occurs if no targets are provided")]
     prompt: bool,
 
     #[structopt(short, long, value_name="VALUE",
