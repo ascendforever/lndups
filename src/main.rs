@@ -2,25 +2,84 @@ extern crate shlex;
 extern crate structopt;
 use std::borrow::Borrow;
 use std::io::{Read, Write, BufReader, BufRead};
-use std::path::{Path,PathBuf};
+use std::path::{Path, PathBuf};
 use std::collections::HashMap;
 use std::os::linux::fs::MetadataExt as MetadataExtLinux;
 use crate::structopt::StructOpt;
 
 
+
 macro_rules! s_default_target_separator { () => { ";" } }
 
+
+
 fn main() -> Result<(), i32> {
-    match process_args() {
-        ProcessArgsResult::Ok(run_paths, cfg) => {
-            for paths in run_paths {
-                run(paths, &cfg);
-            }
-            Ok(())
-        },
-        ProcessArgsResult::Exit => Ok(()),
-        ProcessArgsResult::ExitError => Err(1),
+    let mut args = CLIArguments::from_args();
+    let verbosity = args.verbose - args.quiet;
+
+    let config = Config {
+        min_size: args.min_size.map(|v| if v > 1 { v } else { 1 }).unwrap_or(1),
+        no_brace_output: args.no_brace_output,
+        dry_run: args.dry_run,
+        verbosity
+    };
+
+    if let Some(arg_file) = args.argument_file {
+        if !args.targets.is_empty() {
+            eprintln!("No targets should be provided as cli arguments if arguments are being read from file");
+            return Err(1);
+        }
+        let path = Path::new(&arg_file);
+        if let Err(s) = read_file_lines(path, &mut args.targets) {
+            eprintln!("Error reading argument file: {}", s);
+            return Err(1);
+        }
     }
+
+    let run_targets: Vec<Vec<&String>> = split_vec(&args.targets, &args.separator.unwrap_or(s_default_target_separator!().to_string()));
+
+    if run_targets.is_empty() {
+        if verbosity > 0 {
+            println!("No targets provided");
+        }
+        return Ok(());
+    }
+
+    if args.prompt {
+        if !prompt_confirm(&run_targets) {
+            return Ok(());
+        }
+    }
+
+    let mut bad = false;
+    let run_paths: Vec<Vec<PathBuf>> = run_targets.iter().enumerate().map(
+        |(_,spaths)| spaths.iter().map(
+            |spath| Path::new(spath).canonicalize().unwrap_or_else(
+                |_| {
+                    eprintln!("Failed to retrieve absolute path for {}", shlex::quote(spath));
+                    bad = true;
+                    Default::default()
+                }
+            )
+        ).collect()
+    ).collect();
+    if bad {
+        return Err(1);
+    }
+
+
+    for paths in &run_paths {
+        if let Err(s) = check_all_same_device(paths) {
+            eprintln!("{}", s);
+            return Err(1);
+        }
+    }
+
+
+    for paths in run_paths {
+        run(paths, &config);
+    }
+    Ok(())
 }
 
 
@@ -113,78 +172,6 @@ fn read_file_lines(path: &Path, dest: &mut Vec<String>) -> Result<(), String> {
     } else {
         Err(format!("Could not open {}", shlex::quote(&path.to_string_lossy())))
     }
-}
-
-enum ProcessArgsResult {
-    Ok(Vec<Vec<PathBuf>>, Config),
-    Exit,
-    ExitError,
-}
-
-/// may exit
-fn process_args() -> ProcessArgsResult {
-    let mut args = CLIArguments::from_args();
-    let verbosity = args.verbose - args.quiet;
-
-    let config = Config {
-        min_size: args.min_size.map(|v| if v > 1 { v } else { 1 }).unwrap_or(1),
-        no_brace_output: args.no_brace_output,
-        dry_run: args.dry_run,
-        verbosity
-    };
-
-    if let Some(arg_file) = args.argument_file {
-        if !args.targets.is_empty() {
-            eprintln!("No targets should be provided as cli arguments if arguments are being read from file");
-            return ProcessArgsResult::ExitError;
-        }
-        let path = Path::new(&arg_file);
-        if let Err(s) = read_file_lines(path, &mut args.targets) {
-            eprintln!("Error reading argument file: {}", s);
-            return ProcessArgsResult::ExitError;
-        }
-    }
-
-    let run_targets: Vec<Vec<&String>> = split_vec(&args.targets, &args.separator.unwrap_or(s_default_target_separator!().to_string()));
-
-    if run_targets.is_empty() {
-        if verbosity > 0 {
-            println!("No targets provided");
-        }
-        return ProcessArgsResult::Exit;
-    }
-
-    if args.prompt {
-        if !prompt_confirm(&run_targets) {
-            std::process::exit(0);
-        }
-    }
-
-    let mut bad = false;
-    let run_paths: Vec<Vec<PathBuf>> = run_targets.iter().enumerate().map(
-        |(_,spaths)| spaths.iter().map(
-            |spath| Path::new(spath).canonicalize().unwrap_or_else(
-                |_| {
-                    eprintln!("Failed to retrieve absolute path for {}", shlex::quote(spath));
-                    bad = true;
-                    Default::default()
-                }
-            )
-        ).collect()
-    ).collect();
-    if bad {
-        return ProcessArgsResult::ExitError;
-    }
-
-
-    for paths in &run_paths {
-        if let Err(s) = check_all_same_device(paths) {
-            eprintln!("{}", s);
-            return ProcessArgsResult::ExitError;
-        }
-    }
-
-    ProcessArgsResult::Ok(run_paths, config)
 }
 
 
@@ -436,6 +423,7 @@ fn split_vec<'a, T: std::cmp::PartialEq>(input: &'a [T], delimiter: &T) -> Vec<V
     }
     result
 }
+
 
 #[cfg(test)]
 mod tests {
