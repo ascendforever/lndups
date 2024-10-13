@@ -72,7 +72,7 @@ struct CLIArguments {
 
 
 /// return whether or not user gave confirmation
-fn prompt_confirm(run_targets: &Vec<Vec<String>>) -> bool {
+fn prompt_confirm(run_targets: &Vec<Vec<&String>>) -> bool {
     println!("Are you sure you want to link all duplicates in each of these sets of targets?");
     for spaths in run_targets {
         println!("  {}", shlex::join(spaths.iter().map(|string| string.as_str())));
@@ -128,7 +128,7 @@ fn process_args() -> (Vec<Vec<PathBuf>>, Config) {
         }
     }
 
-    let run_targets: Vec<Vec<String>> = split_vec(&args.targets, &args.separator.unwrap_or(s_default_target_separator!().to_string()));
+    let run_targets: Vec<Vec<&String>> = split_vec(&args.targets, &args.separator.unwrap_or(s_default_target_separator!().to_string()));
 
     if run_targets.is_empty() {
         if verbosity > 0 {
@@ -410,21 +410,34 @@ fn common_suffix<'a>(s1: &'a str, s2: &'a str) -> &'a str {
 }
 
 
-fn split_vec(input: &[String], delimiter: &String) -> Vec<Vec<String>> {
-    let mut result: Vec<Vec<String>> = Vec::new();
-    let mut current_vec: Vec<String> = Vec::new();
-    for item in input.iter() {
-        if item == delimiter {
-            if !current_vec.is_empty() {
-                result.push(current_vec);
-            }
-            current_vec = Vec::new();
-        } else {
-            current_vec.push(item.to_string());
+fn split_vec<'a, T: std::cmp::PartialEq>(input: &'a [T], delimiter: &T) -> Vec<Vec<&'a T>> {
+    let mut result: Vec<Vec<&T>> = Vec::new();
+
+    let mut chunk_start = 0;
+    for (i,item) in input.iter().enumerate() {
+        if item != delimiter {
+            continue
         }
+        if i == chunk_start { // zero size chunk
+            continue
+        }
+        result.push(input[chunk_start..i].iter().collect::<Vec<&T>>());
+        chunk_start = i+1; // next chunk starts on next index
     }
-    if !current_vec.is_empty() {
-        result.push(current_vec);
+    if chunk_start < input.len() {
+        result.push(input[chunk_start..].iter().collect::<Vec<&T>>());
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn _split_vec() {
+        let v: Vec<_> = vec![";", "hi", "bye", ";", "1", ";", ";", "2", "2", ";"].into_iter().map(|s| s.to_string()).collect();
+        let res = split_vec(&v[..], &";".to_string());
+        println!("{:?}", v);
+        println!("{:?}", res);
+    }
 }
