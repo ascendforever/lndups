@@ -10,13 +10,17 @@ use crate::structopt::StructOpt;
 
 macro_rules! s_default_target_separator { () => { ";" } }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let (run_paths, cfg) = process_args();
-    for paths in run_paths {
-        run(paths, &cfg)?;
+fn main() -> Result<(), i32> {
+    match process_args() {
+        ProcessArgsResult::Ok(run_paths, cfg) => {
+            for paths in run_paths {
+                run(paths, &cfg);
+            }
+            Ok(())
+        },
+        ProcessArgsResult::Exit => Ok(()),
+        ProcessArgsResult::ExitError => Err(1),
     }
-
-    Ok(())
 }
 
 
@@ -111,21 +115,33 @@ fn read_file_lines(path: &Path, dest: &mut Vec<String>) -> Result<(), String> {
     }
 }
 
+enum ProcessArgsResult {
+    Ok(Vec<Vec<PathBuf>>, Config),
+    Exit,
+    ExitError,
+}
 
 /// may exit
-fn process_args() -> (Vec<Vec<PathBuf>>, Config) {
+fn process_args() -> ProcessArgsResult {
     let mut args = CLIArguments::from_args();
     let verbosity = args.verbose - args.quiet;
+
+    let config = Config {
+        min_size: args.min_size.map(|v| if v > 1 { v } else { 1 }).unwrap_or(1),
+        no_brace_output: args.no_brace_output,
+        dry_run: args.dry_run,
+        verbosity
+    };
 
     if let Some(arg_file) = args.argument_file {
         if !args.targets.is_empty() {
             eprintln!("No targets should be provided as cli arguments if arguments are being read from file");
-            std::process::exit(1);
+            return ProcessArgsResult::ExitError;
         }
         let path = Path::new(&arg_file);
         if let Err(s) = read_file_lines(path, &mut args.targets) {
             eprintln!("Error reading argument file: {}", s);
-            std::process::exit(1);
+            return ProcessArgsResult::ExitError;
         }
     }
 
@@ -135,7 +151,7 @@ fn process_args() -> (Vec<Vec<PathBuf>>, Config) {
         if verbosity > 0 {
             println!("No targets provided");
         }
-        std::process::exit(0);
+        return ProcessArgsResult::Exit;
     }
 
     if args.prompt {
@@ -144,31 +160,31 @@ fn process_args() -> (Vec<Vec<PathBuf>>, Config) {
         }
     }
 
+    let mut bad = false;
     let run_paths: Vec<Vec<PathBuf>> = run_targets.iter().enumerate().map(
         |(_,spaths)| spaths.iter().map(
             |spath| Path::new(spath).canonicalize().unwrap_or_else(
                 |_| {
                     eprintln!("Failed to retrieve absolute path for {}", shlex::quote(spath));
-                    std::process::exit(1);
+                    bad = true;
+                    Default::default()
                 }
             )
         ).collect()
     ).collect();
+    if bad {
+        return ProcessArgsResult::ExitError;
+    }
 
 
     for paths in &run_paths {
         if let Err(s) = check_all_same_device(paths) {
             eprintln!("{}", s);
-            std::process::exit(1);
+            return ProcessArgsResult::ExitError;
         }
     }
 
-    (run_paths, Config {
-        min_size: args.min_size.map(|v| if v > 1 { v } else { 1 }).unwrap_or(1),
-        no_brace_output: args.no_brace_output,
-        dry_run: args.dry_run,
-        verbosity
-    })
+    ProcessArgsResult::Ok(run_paths, config)
 }
 
 
@@ -208,7 +224,7 @@ fn check_all_same_device(paths: &[PathBuf]) -> Result<(), String> {
 
 
 /// perform a full run
-fn run(paths: Vec<PathBuf>, cfg: &Config) -> Result<(), Box<dyn std::error::Error>> {
+fn run(paths: Vec<PathBuf>, cfg: &Config) {
     let mut registry: HashMap<u64, Vec<PathBuf>> = HashMap::new();
 
     for path in paths {
@@ -259,8 +275,6 @@ fn run(paths: Vec<PathBuf>, cfg: &Config) -> Result<(), Box<dyn std::error::Erro
             }
         }
     }
-
-    Ok(())
 }
 
 
