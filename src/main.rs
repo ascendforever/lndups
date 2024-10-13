@@ -259,7 +259,7 @@ fn run(paths: Vec<PathBuf>, cfg: &Config) {
             let f1 = &files[i];
             for j in (0..i).rev() {
                 let f2 = &files[j];
-                if !are_hardlinked(f1, f2) && cmp(f1, f2) {
+                if !are_hardlinked(f1, f2) && cmp(f1, f2).unwrap_or(false) {
                     if !cfg.dry_run {
                         if let Err(msg) = hardlink(f1, f2) {
                             eprintln!("{}: {}", msg, format_pair(f1, f2, cfg));
@@ -374,33 +374,27 @@ fn are_hardlinked(f1: &PathBuf, f2: &PathBuf) -> bool {
 
 
 /// check equality of contents of two paths to files
-fn cmp(f1: &PathBuf, f2: &PathBuf) -> bool {
+fn cmp(f1: &PathBuf, f2: &PathBuf) -> std::io::Result<bool> {
     if let (Ok(mut f1), Ok(mut f2)) = (std::fs::File::open(f1), std::fs::File::open(f2)) {
         cmp_files(&mut f1, &mut f2)
-    } else { false }
+    } else { Ok(false) }
 }
 
 /// check equality of contents of two open files
-fn cmp_files(f1: &mut std::fs::File, f2: &mut std::fs::File) -> bool {
-    let buff1: &mut[u8] = &mut [0; 1024];
-    let buff2: &mut[u8] = &mut [0; 1024];
+fn cmp_files(f1: &mut std::fs::File, f2: &mut std::fs::File) -> std::io::Result<bool> {
+    let buff1: &mut [u8] = &mut [0; 1024];
+    let buff2: &mut [u8] = &mut [0; 1024];
     loop {
-        match f1.read(buff1) {
-            Err(_) => return false,
-            Ok(readlen1) => match f2.read(buff2) {
-                Err(_) => return false,
-                Ok(readlen2) => {
-                    if readlen1 != readlen2 {
-                        return false;
-                    }
-                    if readlen1 == 0 {
-                        return true;
-                    }
-                    if &buff1[0..readlen1] != &buff2[0..readlen2] {
-                        return false;
-                    }
-                }
-            }
+        let l1 = f1.read(buff1)?;
+        let l2 = f2.read(buff2)?;
+        if l1 != l2 { // different sizes
+            return Ok(false);
+        }
+        if l1 == 0 { // end of both files
+            return Ok(true);
+        }
+        if &buff1[0..l1] != &buff2[0..l2] { // compare data
+            return Ok(false);
         }
     }
 }
