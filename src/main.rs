@@ -163,7 +163,7 @@ fn process_args() -> (Vec<Vec<PathBuf>>, Config) {
     }
 
     (run_paths, Config {
-        min_size: args.min_size.unwrap_or(1),
+        min_size: args.min_size.map(|v| if v > 1 { v } else { 1 }).unwrap_or(1),
         no_brace_output: args.no_brace_output,
         dry_run: args.dry_run,
         verbosity
