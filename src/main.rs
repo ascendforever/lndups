@@ -1,5 +1,6 @@
 extern crate shlex;
 extern crate structopt;
+use std::borrow::Borrow;
 use std::io::{Read, Write, BufReader, BufRead};
 use std::path::{Path,PathBuf};
 use std::collections::HashMap;
@@ -72,10 +73,10 @@ struct CLIArguments {
 
 
 /// return whether or not user gave confirmation
-fn prompt_confirm(run_targets: &Vec<Vec<&String>>) -> bool {
+fn prompt_confirm<'a, T: Borrow<[Y]>, Y: AsRef<str>>(run_targets: &[T]) -> bool {
     println!("Are you sure you want to link all duplicates in each of these sets of targets?");
     for spaths in run_targets {
-        println!("  {}", shlex::join(spaths.iter().map(|string| string.as_str())));
+        println!("  {}", shlex::join(spaths.borrow().iter().map(|s| s.as_ref())));
     }
     print!("> ");
     std::io::stdout().flush().unwrap_or_else(|_| ());
