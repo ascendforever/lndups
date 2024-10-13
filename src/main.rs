@@ -215,19 +215,28 @@ fn run(paths: Vec<PathBuf>, cfg: &Config) -> Result<(), Box<dyn std::error::Erro
     }
     registry.retain(|_,files| files.len() >= 2);
 
-    let stdout = std::io::stdout();
-    let mut stdout_buffer = std::io::BufWriter::new(stdout.lock());
+    let mut stdout_buffer = if cfg.verbosity >= 0 {
+        let stdout = std::io::stdout();
+        let stdout_buffer = std::io::BufWriter::new(stdout.lock());
+        Some(stdout_buffer)
+    } else {
+        None
+    };
 
-    if cfg.verbosity > 0 {
-        writeln!(stdout_buffer, "Considering {} total files for duplicates", registry.iter().map(|(_,files)| files.len()).sum::<usize>()).unwrap();
+    if let Some(stdout_buffer) = &mut stdout_buffer {
+        if cfg.verbosity >= 0 {
+            writeln!(stdout_buffer, "Considering {} total files for duplicates", registry.iter().map(|(_,files)| files.len()).sum::<usize>()).unwrap();
+        }
     }
 
     for (fsize, mut files) in registry {
         if files.len() > 8 {
             files.sort_by_key(|path| path.file_name().unwrap_or_default().to_string_lossy().to_string());
         }
-        if cfg.verbosity > 1 {
-            writeln!(stdout_buffer, "Considering {} files of size {} for duplicates", files.len(), fsize).unwrap();
+        if let Some(stdout_buffer) = &mut stdout_buffer {
+            if cfg.verbosity > 1 {
+                writeln!(stdout_buffer, "Considering {} files of size {} for duplicates", files.len(), fsize).unwrap();
+            }
         }
         for i in (0..files.len()).rev() {
             let f1 = &files[i];
@@ -240,8 +249,10 @@ fn run(paths: Vec<PathBuf>, cfg: &Config) -> Result<(), Box<dyn std::error::Erro
                             continue
                         }
                     }
-                    if cfg.verbosity >= 0 {
-                        writeln!(stdout_buffer, "hardlinked {}", format_pair(f1, f2, cfg)).unwrap();
+                    if let Some(stdout_buffer) = &mut stdout_buffer {
+                        if cfg.verbosity >= 0 {
+                            writeln!(stdout_buffer, "hardlinked {}", format_pair(f1, f2, cfg)).unwrap();
+                        }
                     }
                 }
             }
