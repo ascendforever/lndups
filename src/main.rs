@@ -9,6 +9,7 @@ use crate::structopt::StructOpt;
 
 
 
+macro_rules! s_arg_target_file_name { () => { "target-file" } }
 macro_rules! s_default_target_separator { () => { ";" } }
 
 
@@ -24,14 +25,19 @@ fn main() -> Result<(), i32> {
         verbosity
     };
 
-    if let Some(arg_file) = args.argument_file {
+    if let Some(arg_file) = args.file_containing_targets {
         if !args.targets.is_empty() {
             eprintln!("No targets should be provided as cli arguments if arguments are being read from file");
             return Err(1);
         }
-        let path = Path::new(&arg_file);
-        if let Err(s) = read_file_lines(path, &mut args.targets) {
-            eprintln!("Error reading argument file: {}", s);
+        if let Err(s) = {
+            if arg_file == "-" {
+                read_lines(std::io::stdin().lock(), &mut args.targets)
+            } else {
+                read_file_lines(Path::new(&arg_file), &mut args.targets)
+            }
+        } {
+            eprintln!("Error reading file containing targets: {}", s);
             return Err(1);
         }
     }
@@ -103,40 +109,56 @@ struct Config {
     usage=concat!(env!("CARGO_PKG_NAME"), " [OPTION]... TARGET... ['", s_default_target_separator!(), "' TARGET...]")
 )]
 struct CLIArguments {
-    #[structopt(short, long, parse(from_occurrences),
-                help="Increase verbosity")]
+    #[structopt(short, long, parse(from_occurrences), help="Increase verbosity")]
     verbose: i8,
 
-    #[structopt(short, long, parse(from_occurrences),
-                help="Decrease verbosity")]
+    #[structopt(short, long, parse(from_occurrences), help="Decrease verbosity")]
     quiet: i8,
 
-    #[structopt(long,
-                help="Disable brace notation for output\n  Ex: /home/user/{dir,backup}/file")]
+    #[structopt(long, help=concat!(
+        "Disable brace notation for output\n",
+        "  Ex: /home/user/{dir,backup}/file",
+    ))]
     no_brace_output: bool,
 
-    #[structopt(long,
-                help="Perform no operations on the filesystem")]
+    #[structopt(long, help=concat!(
+        "Perform no operations on the filesystem",
+    ))]
     dry_run: bool,
 
-    #[structopt(short="i",
-                help="Prompt once before operating\nDoesn't occurs if no targets are provided")]
+    #[structopt(short="i", help=concat!(
+        "Prompt once before operating\n",
+        "Doesn't occurs if no targets are provided",
+    ))]
     prompt: bool,
 
-    #[structopt(short, long, value_name="VALUE",
-                help="Minimum file size to be considered for hardlinking\nNever goes below 1 (the default)")]
+    #[structopt(short, long, value_name="VALUE", help=concat!(
+        "Minimum file size to be considered for hardlinking\n",
+        "Never goes below 1 (the default)",
+    ))]
     min_size: Option<u64>,
 
-    #[structopt(short, long, value_name="SEPARATOR",
-                help=concat!("Separator between sets of targets (default: ", s_default_target_separator!(), ")"))]
+    #[structopt(short, long, value_name="SEPARATOR", help=concat!(
+        "Separator between sets of targets (default: ", s_default_target_separator!(), ")",
+    ))]
     separator: Option<String>,
 
-    #[structopt(long, value_name="FILE",
-                help="File to source arguments from (can be '-' for stdin)")]
-    argument_file: Option<String>,
+    #[structopt(long=s_arg_target_file_name!(), value_name="FILE", help=concat!(
+        "File to source targets from (can be '-' for stdin)\n",
+        "Same rules as CLI argument targets apply\n",
+        "Mutually exclusive with CLI argument targets",
+    ))]
+    file_containing_targets: Option<String>,
 
-    #[structopt(value_name="TARGET",
-                help="Target files and directories (recursive)\nEach SEPARATOR denotes a new set of targets\n  Each set of targets are separate from all other sets\n  All targets must be on the same device\nAll symlinks are ignored\n'-' is not treated as special")]
+    #[structopt(value_name="TARGET", help=concat!(
+        "Target files and directories (recursive)\n",
+        "Each SEPARATOR denotes a new set of targets\n",
+        "  Each set of targets are separate from all other sets\n",
+        "  All targets must be on the same device\n",
+        "All symlinks are ignored\n",
+        "'-' is not treated as special\n",
+        "Mutually exclusive with ", s_arg_target_file_name!(),
+    ))]
     targets: Vec<String>,
 }
 
@@ -162,19 +184,23 @@ fn prompt_confirm<'a, T: Borrow<[Y]>, Y: AsRef<str>>(run_targets: &[T]) -> bool 
 }
 
 
+fn read_lines<R: BufRead>(reader: R, dest: &mut Vec<String>) -> Result<(), String> {
+    for line in reader.lines() {
+        match line {
+            Ok(line) => dest.push(line),
+            Err(err) => return Err(format!("Error reading line: {}", err))
+        }
+    }
+    Ok(())
+}
+
 fn read_file_lines(path: &Path, dest: &mut Vec<String>) -> Result<(), String> {
     if !path.is_file() {
         return Err(format!("File does not exist or is not a normal file ({})", shlex::try_quote(&path.to_string_lossy()).unwrap()));
     }
     if let Ok(f) = std::fs::File::open(path) {
         let reader = BufReader::new(f);
-        for line in reader.lines() {
-            match line {
-                Ok(line) => dest.push(line),
-                Err(err) => return Err(format!("Error reading line: {}", err))
-            }
-        }
-        Ok(())
+        read_lines(reader, dest)
     } else {
         Err(format!("Could not open {}", shlex::try_quote(&path.to_string_lossy()).unwrap()))
     }
