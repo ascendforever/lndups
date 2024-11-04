@@ -1,6 +1,6 @@
 [package]
 name = "lndups"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 description = "Hardlink duplicate files"
 authors = ["George H <georgeh124v2@gmail.com>"]
@@ -13,3 +13,5 @@ license = "GPL-3.0-or-later"
 shlex = "1.3"
 smallvec = "1.13"
 structopt = "0.3"
+
+unicode-width = "<0.1.14" # subdependency causing compilation failure
