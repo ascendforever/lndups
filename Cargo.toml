@@ -1,6 +1,6 @@
 [package]
 name = "lndups"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 description = "Hardlink duplicate files"
 authors = ["George H <georgeh124v2@gmail.com>"]
