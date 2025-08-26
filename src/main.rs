@@ -1,14 +1,13 @@
 extern crate shlex;
 extern crate smallvec;
-extern crate structopt;
 use std::borrow::Borrow;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::{Read, Write, BufReader, BufRead};
 use std::os::linux::fs::MetadataExt as MetadataExtLinux;
 use std::path::{Path, PathBuf};
-use crate::structopt::StructOpt;
-use crate::smallvec::*;
+use clap::Parser;
+use smallvec::*;
 
 
 
@@ -16,57 +15,57 @@ macro_rules! s_arg_target_file_name { () => { "target-file" } }
 macro_rules! s_default_target_separator { () => { ";" } }
 
 
-#[derive(StructOpt)]
-#[structopt(
+#[derive(Parser)]
+#[command(
     about=concat!(
         "Hardlink duplicate files recursively\n",
         "Symlinks are treated as normal files",
     ),
-    usage=concat!(env!("CARGO_PKG_NAME"), " [OPTION]... TARGET... ['", s_default_target_separator!(), "' TARGET...]")
+    // usage=concat!(env!("CARGO_PKG_NAME"), " [OPTION]... TARGET... ['", s_default_target_separator!(), "' TARGET...]")
 )]
 struct CLIArguments {
-    #[structopt(short, long, parse(from_occurrences), help="Increase verbosity")]
+    #[arg(short, long, action=clap::ArgAction::Count, help="Increase verbosity")]
     verbose: i8,
 
-    #[structopt(short, long, parse(from_occurrences), help="Decrease verbosity")]
+    #[arg(short, long, action=clap::ArgAction::Count, help="Decrease verbosity")]
     quiet: i8,
 
-    #[structopt(long, help=concat!(
+    #[arg(long, help=concat!(
         "Disable brace notation for output\n",
         "  Ex: /home/user/{dir,backup}/file",
     ))]
     no_brace_output: bool,
 
-    #[structopt(long, help=concat!(
+    #[arg(long, help=concat!(
         "Perform no operations on the filesystem",
     ))]
     dry_run: bool,
 
-    #[structopt(short="i", help=concat!(
+    #[arg(short='i', help=concat!(
         "Prompt once before operating\n",
         "Doesn't occurs if no targets are provided",
     ))]
     prompt: bool,
 
-    #[structopt(short, long, value_name="VALUE", help=concat!(
+    #[arg(short, long, value_name="VALUE", help=concat!(
         "Minimum file size to be considered for hardlinking\n",
         "Never goes below 1 (the default)",
     ))]
     min_size: Option<u64>,
 
-    #[structopt(short, long, value_name="SEPARATOR", help=concat!(
+    #[arg(short, long, value_name="SEPARATOR", help=concat!(
         "Separator between sets of targets (default: ", s_default_target_separator!(), ")",
     ))]
     separator: Option<String>,
 
-    #[structopt(long=s_arg_target_file_name!(), value_name="FILE", help=concat!(
+    #[arg(long=s_arg_target_file_name!(), value_name="FILE", help=concat!(
         "File to source targets from (can be '-' for stdin)\n",
         "Same rules as CLI argument targets apply\n",
         "Mutually exclusive with CLI argument targets",
     ))]
     file_containing_targets: Option<String>,
 
-    #[structopt(value_name="TARGET", help=concat!(
+    #[arg(value_name="TARGET", help=concat!(
         "Target files and directories (recursive)\n",
         "Each SEPARATOR denotes a new set of targets\n",
         "  Each set of targets are separate from all other sets\n",
@@ -90,7 +89,7 @@ struct Config {
 
 
 fn main() -> Result<(), i32> {
-    let mut args = CLIArguments::from_args();
+    let mut args = CLIArguments::parse();
     let verbosity = args.verbose - args.quiet;
 
     let config = Config {
@@ -346,7 +345,7 @@ impl PathWithMetadata {
         Ok(PathWithMetadata{ path, md })
     }
     #[inline(always)]
-    pub fn md(&self) -> std::cell::Ref<std::fs::Metadata> {
+    pub fn md<'a>(&'a self) -> std::cell::Ref<'a, std::fs::Metadata> {
         self.md.borrow()
     }
     pub fn reset_md(&self) -> Result<(), String> {
@@ -474,7 +473,6 @@ where T: smallvec::Array<Item=&'b PathWithMetadata>,
                 writeln!(stdout_buffer, "hardlinked {}", format_pair(&keep.path.to_string_lossy(), &replace.path.to_string_lossy(), cfg)).unwrap();
             }
         }
-        drop(keep);
         keeps.push(replace);
     }
     true
