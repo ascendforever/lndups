@@ -18,7 +18,10 @@ macro_rules! s_default_target_separator { () => { ";" } }
 
 #[derive(StructOpt)]
 #[structopt(
-    about="Hardlink duplicate files recursively\nSymlinks are treated as normal files",
+    about=concat!(
+        "Hardlink duplicate files recursively\n",
+        "Symlinks are treated as normal files",
+    ),
     usage=concat!(env!("CARGO_PKG_NAME"), " [OPTION]... TARGET... ['", s_default_target_separator!(), "' TARGET...]")
 )]
 struct CLIArguments {
@@ -91,7 +94,7 @@ fn main() -> Result<(), i32> {
     let verbosity = args.verbose - args.quiet;
 
     let config = Config {
-        min_size: args.min_size.map(|v| if v > 1 { v } else { 1 }).unwrap_or(1),
+        min_size: args.min_size.map(|v| std::cmp::max(v, 1)).unwrap_or(1),
         no_brace_output: args.no_brace_output,
         dry_run: args.dry_run,
         verbosity
@@ -127,13 +130,13 @@ fn main() -> Result<(), i32> {
     }
 
     if args.prompt {
-        if !prompt_confirm(&run_targets) {
+        if !prompt_confirm(&run_targets).map_err(|_| { eprintln!("IO Error during confirmation prompt"); 1 })? {
             return Ok(());
         }
     }
 
     for paths in run_paths {
-        run(paths, &config);
+        run(paths, &config).map_err(|_| 1)?;
     }
 
     Ok(())
@@ -187,7 +190,8 @@ fn obtain_run_targets<'a>(
 
 
 /// result has no symlinks; may be empty; contents each nonempty
-fn obtain_run_paths<T, Y, U>(run_targets: T, verbosity: i8) -> Result<Vec<Vec<PathWithMetadata>>, i32>
+fn obtain_run_paths<T, Y, U>(run_targets: T, verbosity: i8)
+    -> Result<Vec<Vec<PathWithMetadata>>, i32>
 where
     T: Iterator<Item=Y> + ExactSizeIterator,
     Y: Iterator<Item=U> + ExactSizeIterator,
@@ -222,7 +226,7 @@ where
 
 
 /// perform a full run
-fn run(pwmds: Vec<PathWithMetadata>, cfg: &Config) {
+fn run(pwmds: Vec<PathWithMetadata>, cfg: &Config) -> std::io::Result<()> {
     let mut registry: HashMap<u64, Vec<PathWithMetadata>> = HashMap::new();
     for pwmd in pwmds {
         register(pwmd, &mut registry, cfg);
@@ -233,25 +237,31 @@ fn run(pwmds: Vec<PathWithMetadata>, cfg: &Config) {
 
     if let Some(stdout_buffer) = &mut stdout_buffer {
         if cfg.verbosity >= 0 {
-            writeln!(stdout_buffer, "Considering {} total files for duplicates", registry.iter().map(|(_,files)| files.len()).sum::<usize>()).unwrap();
+            writeln!(stdout_buffer,
+                "Considering {} total files for duplicates",
+                registry.iter().map(|(_,files)| files.len()).sum::<usize>()
+            )?;
         }
     }
 
     for (fsize, pwmds) in registry {
-        run_one_size(fsize, &pwmds, cfg, stdout_buffer.as_mut());
+        run_one_size(fsize, &pwmds, cfg, stdout_buffer.as_mut())?;
     }
+
+    Ok(())
 }
 
-fn run_one_size<W: Write>(fsize: u64, pwmds: &[PathWithMetadata], cfg: &Config, mut stdout_buffer: Option<&mut W>) {
+fn run_one_size<W: Write>(fsize: u64, pwmds: &[PathWithMetadata], cfg: &Config, mut stdout_buffer: Option<&mut W>) -> std::io::Result<()> {
     if let Some(stdout_buffer) = stdout_buffer.as_mut() {
         if cfg.verbosity >= 1 {
-            writeln!(stdout_buffer, "Considering {} files of size {} for duplicates", pwmds.len(), fsize).unwrap();
+            writeln!(stdout_buffer, "Considering {} files of size {} for duplicates", pwmds.len(), fsize)?;
         }
     }
     // if cfg.verbosity >= 0 {
     //     pwmds.sort_by_key(|pwmd| pwmd.path.file_name().unwrap_or_default().to_string_lossy().to_string());
     // }
-    let mut by_inode: Vec<SmallVec<[&PathWithMetadata; 1]>> = Vec::with_capacity((pwmds.len() as f64 * 0.8) as usize); // each nonempty
+    let mut by_inode: Vec<SmallVec<[&PathWithMetadata; 1]>>
+        = Vec::with_capacity((pwmds.len() as f64 * 0.8) as usize); // each nonempty
     let mut inodes: Vec<u64> = Vec::with_capacity(by_inode.len());
     for pwmd in pwmds {
         let inode: u64 = pwmd.md().st_ino();
@@ -282,6 +292,8 @@ fn run_one_size<W: Write>(fsize: u64, pwmds: &[PathWithMetadata], cfg: &Config, 
         }
         i += 1;
     }
+
+    Ok(())
 }
 
 
@@ -360,23 +372,21 @@ impl AsRef<Path> for PathWithMetadata {
 
 
 /// return whether or not user gave confirmation
-fn prompt_confirm<'a, T: Borrow<[Y]>, Y: AsRef<str>>(run_targets: &[T]) -> bool {
-    println!("Are you sure you want to link all duplicates in each of these sets of targets?");
-    for spaths in run_targets {
-        println!("  {}", shlex::try_join(spaths.borrow().iter().map(|s| s.as_ref())).unwrap());
+fn prompt_confirm<'a, T: Borrow<[Y]>, Y: AsRef<str>>(run_targets: &[T]) -> std::io::Result<bool> {
+    {
+        let mut stdout_buffer = std::io::BufWriter::new(std::io::stdout().lock());
+        writeln!(&mut stdout_buffer, "Are you sure you want to link all duplicates in each of these sets of targets?")?;
+        for spaths in run_targets {
+            writeln!(&mut stdout_buffer, "  {}", shlex::try_join(spaths.borrow().iter().map(|s| s.as_ref())).unwrap())?;
+        }
+        write!(&mut stdout_buffer, "> ")?;
+        stdout_buffer.flush().unwrap_or_else(|_| ());
     }
-    print!("> ");
-    std::io::stdout().flush().unwrap_or_else(|_| ());
 
     let mut response = String::new();
-    std::io::stdin().read_line(&mut response).unwrap_or_else(
-        |_| {
-            eprintln!("Problem reading input");
-            std::process::exit(1);
-        }
-    );
+    std::io::stdin().read_line(&mut response)?;
 
-    response.to_lowercase().starts_with("y")
+    Ok(response.to_lowercase().starts_with("y"))
 }
 
 fn read_lines(reader: impl BufRead, dest: &mut Vec<String>) -> Result<(), String> {
