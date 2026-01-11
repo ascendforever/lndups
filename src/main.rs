@@ -2,7 +2,7 @@
 use std::borrow::Borrow;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::io::{Read, Write, BufReader, BufRead};
+use std::io::{Read, Write, BufRead};
 use std::os::linux::fs::MetadataExt as MetadataExtLinux;
 use std::path::{Path, PathBuf};
 
@@ -54,6 +54,13 @@ struct CLIArguments {
     ))]
     min_size: u64,
 
+
+    #[arg(short, long, value_name="NUMBER",
+        default_value="2", help=concat!(
+        "Number of threads",
+    ))]
+    threads: usize,
+
     #[arg(short, long, value_name="SEPARATOR",
         default_value=s_default_target_separator!(), help=concat!(
         "Separator between sets of targets",
@@ -85,7 +92,7 @@ struct Config {
     dry_run: bool,
     min_size: u64,
     verbosity: i16,
-    no_brace_output: bool
+    no_brace_output: bool,
 }
 
 
@@ -93,6 +100,11 @@ struct Config {
 fn main() -> Result<(), i32> {
     let mut args = CLIArguments::parse();
     let verbosity = args.verbose as i16 - args.quiet as i16;
+
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(std::cmp::max(args.threads, 1))
+        .build_global()
+        .unwrap();
 
     let config = Config {
         min_size: std::cmp::max(args.min_size, s_value_absolute_min_size!().parse::<u64>().unwrap()),
@@ -144,6 +156,7 @@ fn main() -> Result<(), i32> {
 }
 
 
+
 /// result may be empty; contents each nonempty
 fn obtain_run_targets<'a>(
     arg_file: Option<&String>,
@@ -191,6 +204,7 @@ fn obtain_run_targets<'a>(
 }
 
 
+
 /// result has no symlinks; may be empty; contents each nonempty
 fn obtain_run_paths<T, Y, U>(
     run_targets: T,
@@ -229,44 +243,76 @@ where
 }
 
 
+
 /// perform a full run
-fn run(pwmds: Vec<PathWithMetadata>, cfg: &Config) -> std::io::Result<()> {
+fn run(
+    pwmds: Vec<PathWithMetadata>,
+    cfg: &Config
+) -> std::io::Result<()> {
     let mut registry: HashMap<u64, Vec<PathWithMetadata>> = HashMap::new();
     for pwmd in pwmds {
         register(pwmd, &mut registry, cfg);
     }
     registry.retain(|_,files| files.len() >= 2);
 
-    let mut stdout_buffer = (cfg.verbosity >= 0).then(|| std::io::BufWriter::new(std::io::stdout().lock()));
+    if cfg.verbosity >= 0 {
+        println!("Considering {} total files for duplicates",
+            registry.iter().map(|(_,files)| files.len()).sum::<usize>()
+        );
+    }
 
-    if let Some(stdout_buffer) = &mut stdout_buffer {
-        if cfg.verbosity >= 0 {
-            writeln!(stdout_buffer,
-                "Considering {} total files for duplicates",
-                registry.iter().map(|(_,files)| files.len()).sum::<usize>()
-            )?;
+
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+
+    let printer = std::thread::spawn(move || {
+        let mut buf = std::io::BufWriter::new(std::io::stdout().lock());
+        for msg in rx {
+            write!(&mut buf, "{}", msg).unwrap();
         }
-    }
+    });
 
-    for (fsize, pwmds) in registry {
-        run_one_size(fsize, &pwmds, cfg, stdout_buffer.as_mut())?;
-    }
+    use rayon::prelude::*;
+    registry
+        .into_par_iter()
+        .fold(
+            match cfg.verbosity {
+                ..0 => || String::new(),
+                0   => || String::with_capacity(1024),
+                1.. => || String::with_capacity(256),
+            },
+            |mut buf, (fsize, pwmds)| {
+                run_one_size(fsize, &pwmds, cfg, &mut buf);
+                buf
+            }
+        )
+        .for_each(|buf| {
+            tx.send(buf).unwrap();
+        });
+
+    drop(tx);
+    printer.join().unwrap();
 
     Ok(())
 }
 
-fn run_one_size<W: Write>(fsize: u64, pwmds: &[PathWithMetadata], cfg: &Config, mut stdout_buffer: Option<&mut W>) -> std::io::Result<()> {
-    if let Some(stdout_buffer) = stdout_buffer.as_mut() {
-        if cfg.verbosity >= 1 {
-            writeln!(stdout_buffer, "Considering {} files of size {} for duplicates", pwmds.len(), fsize)?;
-        }
+
+
+fn run_one_size(
+    fsize: u64,
+    pwmds: &[PathWithMetadata],
+    cfg: &Config,
+    mut output: impl std::fmt::Write,
+) -> () {
+    if cfg.verbosity >= 1 {
+        write!(output, "Considering {} files of size {} for duplicates\n", pwmds.len(), fsize).unwrap();
     }
+
     // if cfg.verbosity >= 0 {
     //     pwmds.sort_by_key(|pwmd| pwmd.path.file_name().unwrap_or_default().to_string_lossy().to_string());
     // }
     let mut by_inode: Vec<SmallVec<[&PathWithMetadata; 1]>>
         = Vec::with_capacity((pwmds.len() as f64 * 0.8) as usize); // each nonempty
-    let mut inodes: Vec<u64> = Vec::with_capacity(by_inode.len());
+    let mut inodes: Vec<u64> = Vec::with_capacity(by_inode.capacity());
     for pwmd in pwmds {
         let inode: u64 = pwmd.md().st_ino();
         match inodes.binary_search(&inode) {
@@ -288,7 +334,7 @@ fn run_one_size<W: Write>(fsize: u64, pwmds: &[PathWithMetadata], cfg: &Config, 
         let mut j = i+1;
         while j < by_inode.len() {
             let (keeps, replaces) = get2mut(&mut by_inode, i, j);
-            if hardlink_all(keeps, replaces, cfg, stdout_buffer.as_mut()) {
+            if hardlink_all(keeps, replaces, cfg, &mut output) {
                 by_inode.swap_remove(j);
             } else {
                 j += 1;
@@ -296,9 +342,8 @@ fn run_one_size<W: Write>(fsize: u64, pwmds: &[PathWithMetadata], cfg: &Config, 
         }
         i += 1;
     }
-
-    Ok(())
 }
+
 
 
 /// recursively register path or its contents if directory into registry
@@ -404,7 +449,7 @@ fn read_file_lines(path: &Path, dest: &mut Vec<String>) -> Result<(), String> {
     if !path.is_file() {
         return Err(format!("File does not exist or is not a normal file ({})", shlex::try_quote(&path.to_string_lossy()).unwrap()));
     }
-    let reader = BufReader::new(std::fs::File::open(path).map_err(
+    let reader = std::io::BufReader::new(std::fs::File::open(path).map_err(
         |e| format!("Could not open {}: {}", shlex::try_quote(&path.to_string_lossy()).unwrap(), e)
     )?);
     read_lines(reader, dest)
@@ -457,7 +502,12 @@ fn hardlink(keep: &PathWithMetadata, replace: &PathWithMetadata) -> Result<(), S
 
 /// returns whether linking was done
 /// eprints errors
-fn hardlink_all<'a, 'b, T, W: Write>(keeps: &'a mut SmallVec<T>, replaces: &'a mut SmallVec<T>, cfg: &Config, mut stdout_buffer: Option<&mut W>) -> bool
+fn hardlink_all<'a, 'b, T, W: std::fmt::Write>(
+    keeps: &'a mut SmallVec<T>,
+    replaces: &'a mut SmallVec<T>,
+    cfg: &Config,
+    mut output: W,
+) -> bool
 where T: smallvec::Array<Item=&'b PathWithMetadata>,
 {
     if !cmp(&replaces.first().unwrap().path, &keeps.first().unwrap().path).unwrap_or(false) {
@@ -468,15 +518,17 @@ where T: smallvec::Array<Item=&'b PathWithMetadata>,
         if !cfg.dry_run {
             if let Err(msg) = hardlink(keep, replace) {
                 if cfg.verbosity >= 0 {
-                    eprintln!("{}: {}", msg, format_pair(&keep.path.to_string_lossy(), &replace.path.to_string_lossy(), cfg));
+                    let mut s = String::new();
+                    write_pair(&mut s, &keep.path.to_string_lossy(), &replace.path.to_string_lossy(), cfg).unwrap();
+                    eprintln!("{}: {}", msg, s);
                 }
-                continue // path no longer valid
+                continue; // path no longer valid
             }
         }
-        if let Some(stdout_buffer) = stdout_buffer.as_mut() {
-            if cfg.verbosity >= 0 {
-                writeln!(stdout_buffer, "hardlinked {}", format_pair(&keep.path.to_string_lossy(), &replace.path.to_string_lossy(), cfg)).unwrap();
-            }
+        if cfg.verbosity >= 0 {
+            write!(&mut output, "hardlinked ", ).unwrap();
+            write_pair(&mut output, &keep.path.to_string_lossy(), &replace.path.to_string_lossy(), cfg).unwrap();
+            write!(&mut output, "\n").unwrap();
         }
         keeps.push(replace);
     }
@@ -484,9 +536,14 @@ where T: smallvec::Array<Item=&'b PathWithMetadata>,
 }
 
 
-fn format_pair(f1s: &str, f2s: &str, cfg: &Config) -> String {
+fn write_pair(
+    mut buf: impl std::fmt::Write,
+    f1s: &str,
+    f2s: &str,
+    cfg: &Config
+) -> std::fmt::Result {
     if cfg.no_brace_output {
-        return format!(
+        return write!(buf,
             "{}  {}",
             shlex::try_quote(&f1s).unwrap(),
             shlex::try_quote(&f2s).unwrap()
@@ -498,7 +555,7 @@ fn format_pair(f1s: &str, f2s: &str, cfg: &Config) -> String {
     let prefixlong = prefix.len() > 2;
     let suffixlong = suffix.len() > 2;
     if prefixlong && suffixlong {
-        format!(
+        write!(buf,
             "{}{{{},{}}}{}",
             shlex::try_quote(prefix).unwrap(),
             shlex::try_quote(&f1s[ prefix.len()..std::cmp::max(prefix.len(), f1s.len()-suffix.len()) ]).unwrap(),
@@ -506,21 +563,21 @@ fn format_pair(f1s: &str, f2s: &str, cfg: &Config) -> String {
             shlex::try_quote(suffix).unwrap()
         )
     } else if prefixlong {
-        format!(
+        write!(buf,
             "{}{{{},{}}}",
             shlex::try_quote(prefix).unwrap(),
             shlex::try_quote(&f1s[prefix.len()..]).unwrap(),
             shlex::try_quote(&f2s[prefix.len()..]).unwrap()
         )
     } else if suffixlong {
-        format!(
+        write!(buf,
             "{{{},{}}}{}",
             shlex::try_quote(&f1s[..f1s.len()-suffix.len()]).unwrap(),
             shlex::try_quote(&f2s[..f2s.len()-suffix.len()]).unwrap(),
             shlex::try_quote(suffix).unwrap(),
         )
     } else {
-        format!(
+        write!(buf,
             "{} <-> {}",
             shlex::try_quote(&f1s).unwrap(),
             shlex::try_quote(&f2s).unwrap()
