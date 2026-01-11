@@ -1,10 +1,10 @@
 [package]
 name = "lndups"
-version = "0.1.5"
-edition = "2021"
+version = "0.2.0"
+edition = "2024"
 description = "Hardlink duplicate files"
 authors = ["George H <georgeh124v2@gmail.com>"]
-repository = "https://github.com/ascendforever/lndups"
+repository = "https://git.ascendforever.com/ascendforever/lndups"
 license = "GPL-3.0-or-later"
 
 [profile.release]
