@@ -19,7 +19,8 @@ macro_rules! s_value_absolute_min_size { () => { "1" } }
 #[derive(Parser)]
 #[command(
     about=concat!(
-        "Hardlink duplicate files recursively",
+        "Hardlink duplicate files recursively\n",
+        "\nThis tool should only be used when you are sure that duplicate files should remain duplicate in perpetuity",
     ),
     // usage=concat!(env!("CARGO_PKG_NAME"), " [OPTION]... TARGET... ['", s_default_target_separator!(), "' TARGET...]")
 )]
@@ -29,6 +30,13 @@ struct CLIArguments {
 
     #[arg(short, long, action=clap::ArgAction::Count, help="Decrease verbosity")]
     quiet: u8,
+
+    #[arg(short, long="raw-output", help=concat!(
+        "Show only hardlink operations and errors, in an easily parseable format\n",
+        "  Outputs two columns separated by a tab\n",
+        "  Bypasses verbosity",
+    ))]
+    raw_output_only: bool,
 
     #[arg(short, long, help=concat!(
         "Disable brace notation for output\n",
@@ -92,6 +100,7 @@ struct Config {
     dry_run: bool,
     min_size: u64,
     verbosity: i16,
+    raw_output_only: bool,
     no_brace_output: bool,
 }
 
@@ -110,6 +119,7 @@ fn main() -> Result<(), i32> {
         min_size: std::cmp::max(args.min_size, s_value_absolute_min_size!().parse::<u64>().unwrap()),
         no_brace_output: args.no_brace_output,
         dry_run: args.dry_run,
+        raw_output_only: args.raw_output_only,
         verbosity
     };
 
@@ -120,8 +130,9 @@ fn main() -> Result<(), i32> {
         verbosity,
     )?;
     if run_targets.is_empty() {
-        if verbosity >= 1 {
-            println!("No targets provided");
+        if verbosity >= 0 && !config.raw_output_only {
+            use clap::CommandFactory;
+            CLIArguments::command().print_help().unwrap();
         }
         return Ok(());
     }
@@ -255,42 +266,79 @@ fn run(
     }
     registry.retain(|_,files| files.len() >= 2);
 
-    if cfg.verbosity >= 0 {
+    if cfg.verbosity >= 0 && !cfg.raw_output_only {
         println!("Considering {} total files for duplicates",
             registry.iter().map(|(_,files)| files.len()).sum::<usize>()
         );
     }
 
 
-    let (tx, rx) = std::sync::mpsc::channel::<String>();
 
-    let printer = std::thread::spawn(move || {
-        let mut buf = std::io::BufWriter::new(std::io::stdout().lock());
-        for msg in rx {
-            write!(&mut buf, "{}", msg).unwrap();
-        }
-    });
+    let (printer, tx) = match cfg.verbosity >= 0 || cfg.raw_output_only {
+        true => {
+            let (tx, rx) = std::sync::mpsc::channel::<String>();
+            let t = std::thread::spawn(move || {
+                let mut buf = std::io::BufWriter::new(std::io::stdout().lock());
+                for msg in rx {
+                    write!(&mut buf, "{}", msg).unwrap();
+                }
+            });
+            (Some(t), Some(tx))
+        },
+        false => (None, None)
+    };
 
     use rayon::prelude::*;
-    registry
+    let (_, savings, number_ionodes_removed, starting_inode_count) = registry
         .into_par_iter()
         .fold(
-            match cfg.verbosity {
-                ..0 => || String::new(),
-                0   => || String::with_capacity(1024),
-                1.. => || String::with_capacity(256),
-            },
-            |mut buf, (fsize, pwmds)| {
-                run_one_size(fsize, &pwmds, cfg, &mut buf);
-                buf
+            || (
+                String::with_capacity(match cfg.verbosity {
+                    ..0 => 0,
+                    0   => 1024,
+                    1.. => 256,
+                }),
+                0, 0, 0
+            ),
+            |
+                (mut buf, total_savings, total_inodes_linked, total_inodes_starting),
+                (fsize, pwmds)
+            | {
+                let (inodes_linked, inodes_starting) = run_one_size(fsize, &pwmds, cfg, &mut buf);
+                (buf, total_savings + fsize as usize * inodes_linked,
+                 total_inodes_linked + inodes_linked, total_inodes_starting + inodes_starting)
             }
         )
-        .for_each(|buf| {
-            tx.send(buf).unwrap();
-        });
+        .reduce(
+            || (String::new(), 0, 0, 0),
+            |
+                (dummy_buf, total_savings, total_inodes_linked, total_inodes_starting),
+                (buf,       savings,       inodes_linked,       inodes_starting)
+            | {
+                if !buf.is_empty() {
+                    if let Some(tx) = &tx {
+                        tx.send(buf).unwrap();
+                    }
+                }
+                (dummy_buf, total_savings + savings,
+                 total_inodes_linked + inodes_linked, total_inodes_starting + inodes_starting)
+            }
+        );
+
+    if cfg.verbosity >= 0 && !cfg.raw_output_only {
+        tx.as_ref().unwrap().send(format!(
+            "Hardlinked {}/{} ({:.2}%) total files freeing {:.2} MiB of storage space\n",
+            number_ionodes_removed,
+            starting_inode_count,
+            100.0 * number_ionodes_removed as f32 / starting_inode_count as f32,
+            savings as f32 / 1024.0 / 1024.0,
+        )).unwrap();
+    }
 
     drop(tx);
-    printer.join().unwrap();
+    if let Some(printer) = printer {
+        printer.join().unwrap();
+    }
 
     Ok(())
 }
@@ -302,14 +350,7 @@ fn run_one_size(
     pwmds: &[PathWithMetadata],
     cfg: &Config,
     mut output: impl std::fmt::Write,
-) -> () {
-    if cfg.verbosity >= 1 {
-        write!(output, "Considering {} files of size {} for duplicates\n", pwmds.len(), fsize).unwrap();
-    }
-
-    // if cfg.verbosity >= 0 {
-    //     pwmds.sort_by_key(|pwmd| pwmd.path.file_name().unwrap_or_default().to_string_lossy().to_string());
-    // }
+) -> (usize, usize) {
     let mut by_inode: Vec<SmallVec<[&PathWithMetadata; 1]>>
         = Vec::with_capacity((pwmds.len() as f64 * 0.8) as usize); // each nonempty
     let mut inodes: Vec<u64> = Vec::with_capacity(by_inode.capacity());
@@ -328,6 +369,8 @@ fn run_one_size(
     drop(inodes);
     by_inode.sort_by(|a,b| b.len().cmp(&a.len())); // descending size order
 
+    let starting_inode_count = by_inode.len();
+
     // compare each with eachother
     let mut i = 0;
     while i < by_inode.len() {
@@ -342,6 +385,24 @@ fn run_one_size(
         }
         i += 1;
     }
+
+    let number_ionodes_removed = starting_inode_count - by_inode.len();
+
+    if cfg.verbosity >= 1 && !cfg.raw_output_only && number_ionodes_removed > 0 {
+        write!(output, "Hardlinked {:>3}/{:>3} ({:>6.2}%) files of size {}\n",
+            number_ionodes_removed,
+            starting_inode_count,
+            100.0 * number_ionodes_removed as f32 / starting_inode_count as f32,
+            fsize
+        ).unwrap();
+    }
+    if cfg.verbosity >= 3 && !cfg.raw_output_only {
+        write!(output, "No duplicates found for {:>3} files of size {}\n",
+            starting_inode_count,
+            fsize
+        ).unwrap();
+    }
+    return (number_ionodes_removed, starting_inode_count)
 }
 
 
@@ -525,8 +586,10 @@ where T: smallvec::Array<Item=&'b PathWithMetadata>,
                 continue; // path no longer valid
             }
         }
-        if cfg.verbosity >= 0 {
-            write!(&mut output, "hardlinked ", ).unwrap();
+        if cfg.verbosity >= 2 || cfg.raw_output_only {
+            if !cfg.raw_output_only {
+                write!(&mut output, "hardlinked\t").unwrap();
+            }
             write_pair(&mut output, &keep.path.to_string_lossy(), &replace.path.to_string_lossy(), cfg).unwrap();
             write!(&mut output, "\n").unwrap();
         }
@@ -542,6 +605,14 @@ fn write_pair(
     f2s: &str,
     cfg: &Config
 ) -> std::fmt::Result {
+    if cfg.raw_output_only {
+        return write!(buf,
+            "{}\t{}",
+            f1s,
+            f2s,
+        )
+    }
+
     if cfg.no_brace_output {
         return write!(buf,
             "{}  {}",
