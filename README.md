@@ -44,4 +44,4 @@ Linux is the sole supported OS
 1. `cargo install lndups`
 2. `curl -O 'http://esil537kn3ooe3zwjqf4ybka5razkzpff6krdqgspv36yaxdu67iv7ad.onion/ascendforever/lndups/raw/branch/master/prebuilt-x86-64-linux/lndups'`
 3. `curl -O 'https://git.ascendforever.com/ascendforever/lndups/raw/branch/master/prebuilt-x86-64-linux/lndups'`
-4. `curl -O 'https://github.com/ascendforever/lndups/raw/refs/heads/main/prebuilt-x86-64-linux/lndups'`
+4. `curl -O 'https://github.com/ascendforever/lndups/raw/refs/heads/master/prebuilt-x86-64-linux/lndups'`
