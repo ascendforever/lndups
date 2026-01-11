@@ -1,11 +1,11 @@
-extern crate shlex;
-extern crate smallvec;
+
 use std::borrow::Borrow;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::{Read, Write, BufReader, BufRead};
 use std::os::linux::fs::MetadataExt as MetadataExtLinux;
 use std::path::{Path, PathBuf};
+
 use clap::Parser;
 use smallvec::*;
 
@@ -13,66 +13,68 @@ use smallvec::*;
 
 macro_rules! s_arg_target_file_name { () => { "target-file" } }
 macro_rules! s_default_target_separator { () => { ";" } }
+macro_rules! s_value_absolute_min_size { () => { "1" } }
 
 
 #[derive(Parser)]
 #[command(
     about=concat!(
-        "Hardlink duplicate files recursively\n",
-        "Symlinks are treated as normal files",
+        "Hardlink duplicate files recursively",
     ),
     // usage=concat!(env!("CARGO_PKG_NAME"), " [OPTION]... TARGET... ['", s_default_target_separator!(), "' TARGET...]")
 )]
 struct CLIArguments {
     #[arg(short, long, action=clap::ArgAction::Count, help="Increase verbosity")]
-    verbose: i8,
+    verbose: u8,
 
     #[arg(short, long, action=clap::ArgAction::Count, help="Decrease verbosity")]
-    quiet: i8,
+    quiet: u8,
 
-    #[arg(long, help=concat!(
+    #[arg(short, long, help=concat!(
         "Disable brace notation for output\n",
         "  Ex: /home/user/{dir,backup}/file",
     ))]
     no_brace_output: bool,
 
-    #[arg(long, help=concat!(
+    #[arg(short, long, help=concat!(
         "Perform no operations on the filesystem",
     ))]
     dry_run: bool,
 
-    #[arg(short='i', help=concat!(
+    #[arg(short='i', long, help=concat!(
         "Prompt once before operating\n",
-        "Doesn't occurs if no targets are provided",
+        "  Doesn't occurs if no targets are provided",
     ))]
     prompt: bool,
 
-    #[arg(short, long, value_name="VALUE", help=concat!(
+    #[arg(short, long, value_name="SIZE",
+        default_value=s_value_absolute_min_size!(), help=concat!(
         "Minimum file size to be considered for hardlinking\n",
-        "Never goes below 1 (the default)",
+        "  Never goes below ", s_value_absolute_min_size!(),
     ))]
-    min_size: Option<u64>,
+    min_size: u64,
 
-    #[arg(short, long, value_name="SEPARATOR", help=concat!(
-        "Separator between sets of targets (default: ", s_default_target_separator!(), ")",
+    #[arg(short, long, value_name="SEPARATOR",
+        default_value=s_default_target_separator!(), help=concat!(
+        "Separator between sets of targets",
     ))]
-    separator: Option<String>,
+    separator: String,
 
-    #[arg(long=s_arg_target_file_name!(), value_name="FILE", help=concat!(
+    #[arg(short, long=s_arg_target_file_name!(), value_name="FILE", help=concat!(
         "File to source targets from (can be '-' for stdin)\n",
-        "Same rules as CLI argument targets apply\n",
-        "Mutually exclusive with CLI argument targets",
+        "  Same rules as CLI argument targets apply\n",
+        "  Mutually exclusive with CLI argument targets",
     ))]
     file_containing_targets: Option<String>,
 
     #[arg(value_name="TARGET", help=concat!(
         "Target files and directories (recursive)\n",
-        "Each SEPARATOR denotes a new set of targets\n",
-        "  Each set of targets are separate from all other sets\n",
-        "  All targets must be on the same device\n",
-        "All symlinks are ignored\n",
-        "'-' is not treated as special\n",
-        "Mutually exclusive with --", s_arg_target_file_name!(),
+        "  Each SEPARATOR denotes a new set of targets\n",
+        "    Each set of targets are separate from all other sets\n",
+        "    All targets in a set must be on the same device\n",
+        "  Symlinks are ignored\n",
+        "  '-' is not treated as special\n",
+        "  Mutually exclusive with --", s_arg_target_file_name!(),
     ))]
     targets: Vec<String>,
 }
@@ -82,7 +84,7 @@ struct CLIArguments {
 struct Config {
     dry_run: bool,
     min_size: u64,
-    verbosity: i8,
+    verbosity: i16,
     no_brace_output: bool
 }
 
@@ -90,10 +92,10 @@ struct Config {
 
 fn main() -> Result<(), i32> {
     let mut args = CLIArguments::parse();
-    let verbosity = args.verbose - args.quiet;
+    let verbosity = args.verbose as i16 - args.quiet as i16;
 
     let config = Config {
-        min_size: args.min_size.map(|v| std::cmp::max(v, 1)).unwrap_or(1),
+        min_size: std::cmp::max(args.min_size, s_value_absolute_min_size!().parse::<u64>().unwrap()),
         no_brace_output: args.no_brace_output,
         dry_run: args.dry_run,
         verbosity
@@ -102,7 +104,7 @@ fn main() -> Result<(), i32> {
     let run_targets: Vec<Vec<&String>> = obtain_run_targets(
         args.file_containing_targets.as_ref(),
         &mut args.targets,
-        args.separator.as_ref().unwrap_or(&s_default_target_separator!().to_string()),
+        &args.separator,
         verbosity,
     )?;
     if run_targets.is_empty() {
@@ -146,7 +148,8 @@ fn main() -> Result<(), i32> {
 fn obtain_run_targets<'a>(
     arg_file: Option<&String>,
     arg_targets: &'a mut Vec<String>,
-    separator: &String, verbosity: i8
+    separator: &String,
+    verbosity: i16
 ) -> Result<Vec<Vec<&'a String>>, i32> {
     if let Some(arg_file) = &arg_file {
         if !arg_targets.is_empty() {
@@ -189,8 +192,10 @@ fn obtain_run_targets<'a>(
 
 
 /// result has no symlinks; may be empty; contents each nonempty
-fn obtain_run_paths<T, Y, U>(run_targets: T, verbosity: i8)
-    -> Result<Vec<Vec<PathWithMetadata>>, i32>
+fn obtain_run_paths<T, Y, U>(
+    run_targets: T,
+    verbosity: i16
+) -> Result<Vec<Vec<PathWithMetadata>>, i32>
 where
     T: Iterator<Item=Y> + ExactSizeIterator,
     Y: Iterator<Item=U> + ExactSizeIterator,
