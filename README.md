@@ -1,4 +1,5 @@
 # lndups
+
 ```
 Hardlink duplicate files recursively
 
@@ -37,11 +38,44 @@ Options:
 ```
 
 
-## Installation
-Linux is the sole supported OS
 
-4 ways to download and install:
-1. `cargo install lndups`
-2. `curl -O 'http://esil537kn3ooe3zwjqf4ybka5razkzpff6krdqgspv36yaxdu67iv7ad.onion/ascendforever/lndups/raw/branch/master/prebuilt-x86-64-linux/lndups'`
-3. `curl -O 'https://git.ascendforever.com/ascendforever/lndups/raw/branch/master/prebuilt-x86-64-linux/lndups'`
-4. `curl -O 'https://github.com/ascendforever/lndups/raw/refs/heads/master/prebuilt-x86-64-linux/lndups'`
+
+
+## Install
+
+
+#### Cargo package
+```bash
+cargo install find-images
+```
+
+
+#### Debian package
+Debian packages are available for stable and oldstable releases.
+
+##### Install the signing key
+Clearnet:
+```bash
+curl https://deb.ascendforever.com/ascendforever.gpg | sudo tee /usr/share/keyrings/ascendforever.gpg
+```
+Or onion:
+```bash
+curl http://csjkrevghycpr6b266bk2hrgfotoxsz7xbyfk6rkk63fxlbkbes7b7qd.onion | sudo tee /usr/share/keyrings/ascendforever.gpg
+```
+
+##### Add repository
+Change `trixie` -> `bookworm` if needed.
+
+Clearnet:
+```bash
+printf 'deb [signed-by=/usr/share/keyrings/ascendforever.gpg] https://deb.ascendforever.com %s main' trixie | sudo tee /etc/apt/sources.list.d/ascendforever.list
+```
+Or onion:
+```bash
+printf 'deb [signed-by=/usr/share/keyrings/ascendforever.gpg] http://csjkrevghycpr6b266bk2hrgfotoxsz7xbyfk6rkk63fxlbkbes7b7qd.onion %s main' trixie | sudo tee /etc/apt/sources.list.d/ascendforever.list
+```
+
+##### Install
+```bash
+sudo apt install -y lndups
+```

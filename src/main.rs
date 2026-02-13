@@ -1,6 +1,4 @@
 
-use std::borrow::Borrow;
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::{Read, Write, BufRead};
 use std::os::linux::fs::MetadataExt as MetadataExtLinux;
@@ -11,9 +9,10 @@ use smallvec::*;
 
 
 
-macro_rules! s_arg_target_file_name { () => { "target-file" } }
-macro_rules! s_default_target_separator { () => { ";" } }
-macro_rules! s_value_absolute_min_size { () => { "1" } }
+#[macro_export] macro_rules! s_arg_target_file_name { () => { "target-file" } }
+#[macro_export] macro_rules! s_default_target_separator { () => { ";" } }
+#[macro_export] macro_rules! s_value_absolute_min_size { () => { "1" } }
+
 
 
 #[derive(Parser)]
@@ -24,63 +23,64 @@ macro_rules! s_value_absolute_min_size { () => { "1" } }
     ),
     // usage=concat!(env!("CARGO_PKG_NAME"), " [OPTION]... TARGET... ['", s_default_target_separator!(), "' TARGET...]")
 )]
-struct CLIArguments {
+pub struct Arguments {
     #[arg(short, long, action=clap::ArgAction::Count, help="Increase verbosity")]
-    verbose: u8,
+    pub verbose: u8,
 
     #[arg(short, long, action=clap::ArgAction::Count, help="Decrease verbosity")]
-    quiet: u8,
+    pub quiet: u8,
 
     #[arg(short, long="raw-output", help=concat!(
         "Show only hardlink operations and errors, in an easily parseable format\n",
         "  Outputs two columns separated by a tab\n",
         "  Bypasses verbosity",
     ))]
-    raw_output_only: bool,
+    pub raw_output_only: bool,
 
     #[arg(short, long, help=concat!(
         "Disable brace notation for output\n",
         "  Ex: /home/user/{dir,backup}/file",
     ))]
-    no_brace_output: bool,
+    pub no_brace_output: bool,
 
     #[arg(short, long, help=concat!(
         "Perform no operations on the filesystem",
     ))]
-    dry_run: bool,
+    pub dry_run: bool,
 
     #[arg(short='i', long, help=concat!(
         "Prompt once before operating\n",
         "  Doesn't occurs if no targets are provided",
     ))]
-    prompt: bool,
+    pub prompt: bool,
 
     #[arg(short, long, value_name="SIZE",
         default_value=s_value_absolute_min_size!(), help=concat!(
         "Minimum file size to be considered for hardlinking\n",
         "  Never goes below ", s_value_absolute_min_size!(),
     ))]
-    min_size: u64,
+    pub min_size: u64,
 
 
     #[arg(short, long, value_name="NUMBER",
         default_value="2", help=concat!(
         "Number of threads",
     ))]
-    threads: usize,
+    pub threads: usize,
 
     #[arg(short, long, value_name="SEPARATOR",
         default_value=s_default_target_separator!(), help=concat!(
         "Separator between sets of targets",
     ))]
-    separator: String,
+    pub separator: String,
 
-    #[arg(short, long=s_arg_target_file_name!(), value_name="FILE", help=concat!(
+    #[arg(short, long=s_arg_target_file_name!(),
+        value_name="FILE", help=concat!(
         "File to source targets from (can be '-' for stdin)\n",
         "  Same rules as CLI argument targets apply\n",
         "  Mutually exclusive with CLI argument targets",
     ))]
-    file_containing_targets: Option<String>,
+    pub file_containing_targets: Option<String>,
 
     #[arg(value_name="TARGET", help=concat!(
         "Target files and directories (recursive)\n",
@@ -91,12 +91,12 @@ struct CLIArguments {
         "  '-' is not treated as special\n",
         "  Mutually exclusive with --", s_arg_target_file_name!(),
     ))]
-    targets: Vec<String>,
+    pub targets: Vec<String>,
 }
 
 
 
-struct Config {
+pub struct Config {
     dry_run: bool,
     min_size: u64,
     verbosity: i16,
@@ -105,9 +105,12 @@ struct Config {
 }
 
 
+pub type Registry = HashMap<u64, Vec<PathWithMetadata>>;
 
-fn main() -> Result<(), i32> {
-    let mut args = CLIArguments::parse();
+
+
+pub fn main() -> Result<(), i32> {
+    let mut args = Arguments::parse();
     let verbosity = args.verbose as i16 - args.quiet as i16;
 
     rayon::ThreadPoolBuilder::new()
@@ -132,7 +135,7 @@ fn main() -> Result<(), i32> {
     if run_targets.is_empty() {
         if verbosity >= 0 && !config.raw_output_only {
             use clap::CommandFactory;
-            CLIArguments::command().print_help().unwrap();
+            Arguments::command().print_help().unwrap();
         }
         return Ok(());
     }
@@ -205,7 +208,7 @@ fn obtain_run_targets<'a>(
         }
     }
 
-    let mut run_targets = split_vec(arg_targets, &separator);
+    let mut run_targets = split_slice(arg_targets, &separator);
     for i in (0..run_targets.len()).rev() {
         if run_targets[i].len() == 0 {
             run_targets.swap_remove(i);
@@ -254,13 +257,12 @@ where
 }
 
 
-
 /// perform a full run
 fn run(
     pwmds: Vec<PathWithMetadata>,
     cfg: &Config
 ) -> std::io::Result<()> {
-    let mut registry: HashMap<u64, Vec<PathWithMetadata>> = HashMap::new();
+    let mut registry  = Registry::new();
     for pwmd in pwmds {
         register(pwmd, &mut registry, cfg);
     }
@@ -289,8 +291,8 @@ fn run(
     };
 
     use rayon::prelude::*;
-    let (_, savings, number_ionodes_removed, starting_inode_count) = registry
-        .into_par_iter()
+    let (_, savings, number_ionodes_removed, starting_inode_count) =
+        registry.into_par_iter()
         .fold(
             || (
                 String::with_capacity(match cfg.verbosity {
@@ -409,7 +411,7 @@ fn run_one_size(
 
 /// recursively register path or its contents if directory into registry
 /// eprints errors
-fn register(
+pub fn register(
     pwmd: PathWithMetadata,
     registry: &mut HashMap<u64, Vec<PathWithMetadata>>,
     cfg: &Config,
@@ -435,27 +437,32 @@ fn register(
                 },
             },
             Err(error) => if cfg.verbosity >= 1 {
-                eprintln!("Failed to inspect {}: {}", shlex::try_quote(&pwmd.path.to_string_lossy()).unwrap(), error);
+                eprintln!(
+                    "Failed to inspect {}: {}",
+                    shlex::try_quote(&pwmd.path.to_string_lossy()).unwrap(),
+                    error);
             },
         } },
         Err(error) => if cfg.verbosity >= 1 {
-            eprintln!("Failed to read dir {}: {}", shlex::try_quote(&pwmd.path.to_string_lossy()).unwrap(), error);
+            eprintln!(
+                "Failed to read dir {}: {}",
+                shlex::try_quote(&pwmd.path.to_string_lossy()).unwrap(),
+                error);
         },
     } }
 }
 
 
 
-struct PathWithMetadata {
+pub struct PathWithMetadata {
     pub path: PathBuf,
-    md: RefCell<std::fs::Metadata>,
+    md: std::cell::RefCell<std::fs::Metadata>,
 }
 impl PathWithMetadata {
     pub fn new(path: PathBuf) -> Result<Self, String>{
-        let md = RefCell::new(Self::get_md(&path)?);
+        let md = std::cell::RefCell::new(Self::get_md(&path)?);
         Ok(PathWithMetadata{ path, md })
     }
-    #[inline(always)]
     pub fn md<'a>(&'a self) -> std::cell::Ref<'a, std::fs::Metadata> {
         self.md.borrow()
     }
@@ -464,7 +471,12 @@ impl PathWithMetadata {
         Ok(())
     }
     fn get_md(path: &PathBuf) -> Result<std::fs::Metadata, String> {
-        std::fs::symlink_metadata(path).map_err(|_| format!("Failed to retrive metadata for {}", shlex::try_quote(&path.to_string_lossy()).unwrap()))
+        Ok(std::fs::symlink_metadata(path)
+            .map_err(|e| format!(
+                "Failed to retrive metadata for {}: {}",
+                shlex::try_quote(&path.to_string_lossy()).unwrap(),
+                e
+            ))?)
     }
 
 }
@@ -482,7 +494,8 @@ impl AsRef<Path> for PathWithMetadata {
 
 
 /// return whether or not user gave confirmation
-fn prompt_confirm<'a, T: Borrow<[Y]>, Y: AsRef<str>>(run_targets: &[T]) -> std::io::Result<bool> {
+pub fn prompt_confirm<'a, T, Y>(run_targets: &[T]) -> std::io::Result<bool>
+where T: std::borrow::Borrow<[Y]>, Y: AsRef<str> {
     {
         let mut stdout_buffer = std::io::BufWriter::new(std::io::stdout().lock());
         writeln!(&mut stdout_buffer, "Are you sure you want to link all duplicates in each of these sets of targets?")?;
@@ -499,25 +512,33 @@ fn prompt_confirm<'a, T: Borrow<[Y]>, Y: AsRef<str>>(run_targets: &[T]) -> std::
     Ok(response.to_lowercase().starts_with("y"))
 }
 
-fn read_lines(reader: impl BufRead, dest: &mut Vec<String>) -> Result<(), String> {
+pub fn read_lines(
+    reader: impl BufRead,
+    dest: &mut Vec<String>
+) -> Result<(), String> {
     for line in reader.lines() {
         dest.push(line.map_err(|e| format!("Error reading line: {}", e))?);
     }
     Ok(())
 }
 
-fn read_file_lines(path: &Path, dest: &mut Vec<String>) -> Result<(), String> {
+pub fn read_file_lines(
+    path: &Path,
+    dest: &mut Vec<String>
+) -> Result<(), String> {
     if !path.is_file() {
         return Err(format!("File does not exist or is not a normal file ({})", shlex::try_quote(&path.to_string_lossy()).unwrap()));
     }
     let reader = std::io::BufReader::new(std::fs::File::open(path).map_err(
         |e| format!("Could not open {}: {}", shlex::try_quote(&path.to_string_lossy()).unwrap(), e)
     )?);
-    read_lines(reader, dest)
+    Ok(read_lines(reader, dest)?)
 }
 
 
-fn check_all_same_device(pwmds: &[PathWithMetadata]) -> Result<(), String> {
+pub fn check_all_same_device(
+    pwmds: &[PathWithMetadata]
+) -> Result<(), String> {
     if pwmds.len() <= 1 {
         return Ok(())
     }
@@ -543,13 +564,19 @@ fn check_all_same_device(pwmds: &[PathWithMetadata]) -> Result<(), String> {
 
 /// get two mutable references in an array
 /// expects correct inputs
-fn get2mut<'a, T>(v: &'a mut [T], i: usize, j: usize) -> (&'a mut T, &'a mut T) {
+pub fn get2mut<'a, T>(
+    v: &'a mut [T],
+    i: usize, j: usize
+) -> (&'a mut T, &'a mut T) {
     let (left, right) = v.split_at_mut(j);
     (&mut left[i], &mut right[0])
 }
 
 
-fn hardlink(keep: &PathWithMetadata, replace: &PathWithMetadata) -> Result<(), String> {
+pub fn hardlink(
+    keep: &PathWithMetadata,
+    replace: &PathWithMetadata
+) -> Result<(), String> {
     std::fs::remove_file(&replace.path).map_err(|_| "Failed to remove for hardlinking")?;
     std::fs::hard_link(&keep.path, &replace.path).map_err(|_| {
         match std::fs::copy(&keep.path, &replace.path) {
@@ -563,11 +590,11 @@ fn hardlink(keep: &PathWithMetadata, replace: &PathWithMetadata) -> Result<(), S
 
 /// returns whether linking was done
 /// eprints errors
-fn hardlink_all<'a, 'b, T, W: std::fmt::Write>(
+fn hardlink_all<'a, 'b, T>(
     keeps: &'a mut SmallVec<T>,
     replaces: &'a mut SmallVec<T>,
     cfg: &Config,
-    mut output: W,
+    mut output: impl std::fmt::Write,
 ) -> bool
 where T: smallvec::Array<Item=&'b PathWithMetadata>,
 {
@@ -599,7 +626,7 @@ where T: smallvec::Array<Item=&'b PathWithMetadata>,
 }
 
 
-fn write_pair(
+pub fn write_pair(
     mut buf: impl std::fmt::Write,
     f1s: &str,
     f2s: &str,
@@ -659,12 +686,12 @@ fn write_pair(
 
 /// check equality of contents of two paths to files
 /// does not check sizes
-fn cmp(f1: impl AsRef<Path>, f2: impl AsRef<Path>) -> std::io::Result<bool> {
+pub fn cmp(f1: impl AsRef<Path>, f2: impl AsRef<Path>) -> std::io::Result<bool> {
     cmp_read(std::fs::File::open(f1)?, std::fs::File::open(f2)?)
 }
 
 /// check equality of contents of two open files
-fn cmp_read(mut f1: impl Read, mut f2: impl Read) -> std::io::Result<bool> {
+pub fn cmp_read(mut f1: impl Read, mut f2: impl Read) -> std::io::Result<bool> {
     let buff1: &mut [u8] = &mut [0; 1024];
     let buff2: &mut [u8] = &mut [0; 1024];
     loop {
@@ -683,7 +710,7 @@ fn cmp_read(mut f1: impl Read, mut f2: impl Read) -> std::io::Result<bool> {
 }
 
 
-fn common_prefix<'a>(s1: &'a str, s2: &'a str) -> &'a str {
+pub fn common_prefix<'a>(s1: &'a str, s2: &'a str) -> &'a str {
     let len = s1
         .chars()
         .zip(s2.chars())
@@ -691,7 +718,7 @@ fn common_prefix<'a>(s1: &'a str, s2: &'a str) -> &'a str {
         .count();
     &s1[..len]
 }
-fn common_suffix<'a>(s1: &'a str, s2: &'a str) -> &'a str {
+pub fn common_suffix<'a>(s1: &'a str, s2: &'a str) -> &'a str {
     let len = s1
         .chars()
         .rev()
@@ -703,7 +730,7 @@ fn common_suffix<'a>(s1: &'a str, s2: &'a str) -> &'a str {
 
 
 /// double delimiters will result in empty vecs
-fn split_vec<'a, T: std::cmp::PartialEq>(input: &'a [T], delimiter: &T) -> Vec<Vec<&'a T>> {
+pub fn split_slice<'a, T: std::cmp::PartialEq>(input: &'a [T], delimiter: &T) -> Vec<Vec<&'a T>> {
     let mut result: Vec<Vec<&T>> = Vec::new();
 
     let mut chunk_start = 0;
@@ -725,12 +752,12 @@ fn split_vec<'a, T: std::cmp::PartialEq>(input: &'a [T], delimiter: &T) -> Vec<V
 
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
-    fn _split_vec() {
+    pub fn test_split_slice() {
         let v: Vec<_> = vec![";", ";", ";"].into_iter().map(|s| s.to_string()).collect();
-        let res = split_vec(&v[..], &";".to_string());
+        let res = split_slice(&v[..], &";".to_string());
         assert_eq!(res.len(), 2)
     }
 }

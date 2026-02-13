@@ -1,0 +1,72 @@
+kind: pipeline
+type: docker
+name: build-and-release
+
+trigger:
+  branch:
+    - master
+
+steps:
+
+  - name: test
+    image: rust:trixie
+    commands:
+      - cargo test
+
+  - name: build
+    image: rust:trixie
+    commands:
+      - cargo build --release
+
+  - name: build-package
+    image: rust:trixie
+    commands:
+      - apt-get update
+      - apt-get install -y --no-install-recommends lsb-release
+      - cargo install cargo-deb
+      - |
+        if [ -n "${DRONE_TAG:-}" ]; then
+          cargo deb --deb-version "${DRONE_TAG}"
+        else
+          version="$$(sed -E '/^version/!d; s/^version *= *"(.+)".*/\\\\1/' Cargo.toml)"
+          shortsha="$$(printf "%s" "${DRONE_COMMIT_SHA}" | cut -c1-8)"
+          datestr="$$(date -u +%Y%m%d)"
+          cargo deb --deb-version "$${version}~git$${datestr}.$${shortsha}"
+        fi
+      - ls -l target/debian/*.deb
+
+  - name: upload-package
+    image: alpine:3.22
+    environment:
+      SSH_USER: deploy
+      SSH_HOST: 100.64.0.13
+      SSH_KEY:
+        from_secret: repo_deploy_ssh_key
+    commands:
+      - apk add --no-cache openssh-client
+      - mkdir -p /root/.ssh
+      - echo "$SSH_KEY" > /root/.ssh/id_rsa
+      - chmod 600 /root/.ssh/id_rsa
+      - ssh-keyscan -H "$SSH_HOST" >> /root/.ssh/known_hosts
+      - scp target/debian/*.deb "$SSH_USER@$SSH_HOST:/srv/deb/incoming"
+
+  - name: publish-package
+    image: alpine:3.22
+    environment:
+      SSH_USER: deploy
+      SSH_HOST: 100.64.0.13
+      SSH_KEY:
+        from_secret: repo_deploy_ssh_key
+    commands:
+      - apk add --no-cache openssh-client bash
+      - mkdir -p /root/.ssh
+      - echo "$SSH_KEY" > /root/.ssh/id_rsa
+      - chmod 600 /root/.ssh/id_rsa
+      - ssh-keyscan -H "$SSH_HOST" >> /root/.ssh/known_hosts
+      - |
+        ssh "$SSH_USER@$SSH_HOST" bash -lc '
+          shopt -s failglob
+          src=(/srv/deb/incoming/*.deb)
+          sudo -u user repo-add-deb "$${src[@]}" &&
+          rm -f "$${src[@]}"
+        '
