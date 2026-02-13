@@ -7,13 +7,27 @@ authors = ["George H <georgeh124v2@gmail.com>"]
 repository = "https://git.ascendforever.com/ascendforever/lndups"
 license = "GPL-3.0-or-later"
 
+[package.metadata.deb]
+maintainer = "George H <georgeh124v2@gmail.com>"
+depends = "$auto"
+section = "utils"
+priority = "optional"
+assets = [
+    ["target/release/lndups", "usr/bin/", "755"],
+    ["README.md", "usr/share/doc/lndups/README.md", "644"],
+    ["LICENSE", "usr/share/doc/lndups/copyright", "644"]
+]
+
+
 [profile.release]
 lto = true
+codegen-units = 4
+strip = "debuginfo"
+overflow-checks = true
+
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
 rayon = "1.11"
 shlex = "1.3"
 smallvec = "1.14"
-
-unicode-width = "<0.1.14" # subdependency causing compilation failure
