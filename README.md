@@ -44,26 +44,26 @@ Options:
 ## Install
 
 
-#### Cargo package
+### Cargo package
 ```bash
 cargo install find-images
 ```
 
 
-#### Debian package
+### Debian package
 Debian packages are available for stable and oldstable releases.
 
-##### Install the signing key
+#### Install the signing key
 Clearnet:
 ```bash
-curl https://deb.ascendforever.com/ascendforever.gpg | sudo tee /usr/share/keyrings/ascendforever.gpg
+curl https://deb.ascendforever.com/ascendforever.gpg | sudo tee /usr/share/keyrings/ascendforever.gpg >/dev/null
 ```
 Or onion:
 ```bash
-curl http://csjkrevghycpr6b266bk2hrgfotoxsz7xbyfk6rkk63fxlbkbes7b7qd.onion | sudo tee /usr/share/keyrings/ascendforever.gpg
+curl http://csjkrevghycpr6b266bk2hrgfotoxsz7xbyfk6rkk63fxlbkbes7b7qd.onion | sudo tee /usr/share/keyrings/ascendforever.gpg >/dev/null
 ```
 
-##### Add repository
+#### Add repository
 Change `trixie` -> `bookworm` if needed.
 
 Clearnet:
@@ -75,7 +75,7 @@ Or onion:
 printf 'deb [signed-by=/usr/share/keyrings/ascendforever.gpg] http://csjkrevghycpr6b266bk2hrgfotoxsz7xbyfk6rkk63fxlbkbes7b7qd.onion %s main' trixie | sudo tee /etc/apt/sources.list.d/ascendforever.list
 ```
 
-##### Install
+#### Install
 ```bash
 sudo apt install -y lndups
 ```
