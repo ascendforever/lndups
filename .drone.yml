@@ -30,10 +30,9 @@ steps:
         else
           version="$$(sed -E '/^version/!d; s/^version *= *"(.+)".*/\\\\1/' Cargo.toml)"
           shortsha="$$(printf "%s" "${DRONE_COMMIT_SHA}" | cut -c1-8)"
-          datestr="$$(date -u +%Y%m%d)"
-          cargo deb --deb-version "$${version}~git$${datestr}.$${shortsha}"
+          date="$$(date -u +%Y%m%d-%H%M)"
+          cargo deb --deb-version "$${version}~$${date}~$${shortsha}"
         fi
-      - ls -l target/debian/*.deb
 
   - name: upload-package
     image: alpine:3.22
@@ -58,15 +57,18 @@ steps:
       SSH_KEY:
         from_secret: repo_deploy_ssh_key
     commands:
-      - apk add --no-cache openssh-client bash
+      - apk add --no-cache openssh-client
       - mkdir -p /root/.ssh
       - echo "$SSH_KEY" > /root/.ssh/id_rsa
       - chmod 600 /root/.ssh/id_rsa
       - ssh-keyscan -H "$SSH_HOST" >> /root/.ssh/known_hosts
-      - |
-        ssh "$SSH_USER@$SSH_HOST" bash -lc '
-          shopt -s failglob
-          src=(/srv/deb/incoming/*.deb)
-          sudo -u user repo-add-deb "$${src[@]}" &&
-          rm -f "$${src[@]}"
+      - cd target/debian
+      - |-
+        ls *.deb | ssh "$SSH_USER@$SSH_HOST" bash -c '
+          cd /srv/deb/incoming || exit 1
+          debs=()
+          while read -r deb; do debs+=("$deb"); done
+          echo debs: "$${debs[@]}"
+          sudo -u user repo-add-deb "$${debs[@]}"
+          rm -f "$${debs[@]}"
         '
